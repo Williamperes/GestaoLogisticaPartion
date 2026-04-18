@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { signOut } from "@/app/(auth)/actions";
 
 const navGroups = [
   {
@@ -37,7 +38,13 @@ const navGroups = [
   },
 ];
 
-export function Sidebar() {
+export function Sidebar({
+  userName,
+  userRole,
+}: {
+  userName: string;
+  userRole: string;
+}) {
   const [collapsed, setCollapsed] = useState(false);
   const pathname = usePathname();
 
@@ -165,26 +172,37 @@ export function Sidebar() {
           {collapsed && <TooltipContent side="right">Configurações</TooltipContent>}
         </Tooltip>
 
-        {/* User */}
-        <div className="flex items-center gap-3 px-2 py-2 mt-2 rounded-lg hover:bg-black/5 cursor-pointer transition-all">
-          <div className="w-7 h-7 rounded-full bg-gradient-to-br from-amber-500 to-amber-500 flex items-center justify-center shrink-0">
-            <span className="text-[10px] font-bold text-black">YS</span>
-          </div>
-          <AnimatePresence>
-            {!collapsed && (
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                className="flex-1 min-w-0"
-              >
-                <p className="text-xs font-medium text-foreground truncate">Yuri Silveira</p>
-                <p className="text-[10px] text-muted-foreground truncate">Administrador</p>
-              </motion.div>
-            )}
-          </AnimatePresence>
-          {!collapsed && <LogOut className="w-3.5 h-3.5 text-muted-foreground shrink-0" />}
-        </div>
+        <form action={signOut} className="mt-2">
+          <button
+            type="submit"
+            className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left hover:bg-black/5 transition-all"
+          >
+            <div className="w-7 h-7 rounded-full bg-gradient-to-br from-amber-500 to-amber-500 flex items-center justify-center shrink-0">
+              <span className="text-[10px] font-bold text-black">
+                {userName
+                  .split(" ")
+                  .map((part) => part[0] ?? "")
+                  .join("")
+                  .slice(0, 2)
+                  .toUpperCase()}
+              </span>
+            </div>
+            <AnimatePresence>
+              {!collapsed && (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="flex-1 min-w-0"
+                >
+                  <p className="text-xs font-medium text-foreground truncate">{userName}</p>
+                  <p className="text-[10px] text-muted-foreground truncate">{userRole}</p>
+                </motion.div>
+              )}
+            </AnimatePresence>
+            {!collapsed && <LogOut className="w-3.5 h-3.5 text-muted-foreground shrink-0" />}
+          </button>
+        </form>
       </div>
 
       {/* Collapse toggle */}
