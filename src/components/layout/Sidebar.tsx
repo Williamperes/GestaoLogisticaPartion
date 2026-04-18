@@ -91,7 +91,14 @@ export function Sidebar({
                     <Tooltip>
                       <TooltipTrigger
                         nativeButton={false}
-                        render={<Link href={item.href} />}
+                        render={(props) => {
+                          const { nativeButton, ...linkProps } = props as React.ComponentPropsWithoutRef<"a"> & {
+                            nativeButton?: boolean;
+                          };
+                          void nativeButton;
+
+                          return <Link href={item.href} {...linkProps} />;
+                        }}
                         className={cn(
                           "flex items-center gap-3 px-2 py-2 rounded-lg text-sm font-medium transition-all duration-150",
                           active
@@ -140,7 +147,14 @@ export function Sidebar({
         <Tooltip>
           <TooltipTrigger
             nativeButton={false}
-            render={<Link href="#" />}
+            render={(props) => {
+              const { nativeButton, ...linkProps } = props as React.ComponentPropsWithoutRef<"a"> & {
+                nativeButton?: boolean;
+              };
+              void nativeButton;
+
+              return <Link href="#" {...linkProps} />;
+            }}
             className="flex items-center gap-3 px-2 py-2 rounded-lg text-sm text-sidebar-foreground/60 hover:bg-black/5 hover:text-sidebar-foreground transition-all"
           >
             <Bell className="w-4.5 h-4.5 shrink-0" />
@@ -157,7 +171,14 @@ export function Sidebar({
         <Tooltip>
           <TooltipTrigger
             nativeButton={false}
-            render={<Link href="#" />}
+            render={(props) => {
+              const { nativeButton, ...linkProps } = props as React.ComponentPropsWithoutRef<"a"> & {
+                nativeButton?: boolean;
+              };
+              void nativeButton;
+
+              return <Link href="#" {...linkProps} />;
+            }}
             className="flex items-center gap-3 px-2 py-2 rounded-lg text-sm text-sidebar-foreground/60 hover:bg-black/5 hover:text-sidebar-foreground transition-all"
           >
             <Settings className="w-4.5 h-4.5 shrink-0" />

@@ -41,18 +41,41 @@ export function StatusBadge({ status, type, className }: StatusBadgeProps) {
 }
 
 interface SpecialtyBadgeProps {
-  specialty: "sound" | "light" | "image";
+  specialty: string;
   className?: string;
 }
 
-const specialtyMap = {
+const specialtyMap: Record<string, { label: string; className: string }> = {
   sound: { label: "Som", className: "bg-blue-500/15 text-blue-600" },
   light: { label: "Luz", className: "bg-amber-500/15 text-amber-600" },
-  image: { label: "Imagem", className: "bg-purple-500/15 text-purple-400" },
+  image: { label: "Imagem", className: "bg-indigo-500/15 text-indigo-600" },
 };
 
+const specialtyToneClasses = [
+  "bg-blue-500/15 text-blue-600",
+  "bg-amber-500/15 text-amber-600",
+  "bg-emerald-500/15 text-emerald-600",
+  "bg-red-500/15 text-red-600",
+  "bg-indigo-500/15 text-indigo-600",
+  "bg-zinc-500/15 text-zinc-500",
+];
+
 export function SpecialtyBadge({ specialty, className }: SpecialtyBadgeProps) {
-  const config = specialtyMap[specialty];
+  const normalizedSpecialty = specialty
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+
+  const fixedConfig = specialtyMap[normalizedSpecialty];
+  const fallbackIndex = normalizedSpecialty
+    .split("")
+    .reduce((accumulator, character) => accumulator + character.charCodeAt(0), 0) % specialtyToneClasses.length;
+  const config = fixedConfig ?? {
+    label: specialty,
+    className: specialtyToneClasses[fallbackIndex],
+  };
+
   return (
     <span className={cn("inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ring-1 ring-inset ring-current/20", config.className, className)}>
       {config.label}
