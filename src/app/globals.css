@@ -1,6 +1,6 @@
 @import "tailwindcss";
 @import "tw-animate-css";
-@import "shadcn/tailwind.css";
+
 
 @custom-variant dark (&:is(.dark *));
 
@@ -46,75 +46,136 @@
   --radius-2xl: calc(var(--radius) * 1.8);
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
+
+  /* PARTION brand tokens */
+  --color-amber: var(--amber);
+  --color-amber-foreground: var(--amber-foreground);
+  --color-electric: var(--electric);
+  --color-electric-foreground: var(--electric-foreground);
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+
+  /* Status colors */
+  --color-status-available: var(--status-available);
+  --color-status-reserved: var(--status-reserved);
+  --color-status-maintenance: var(--status-maintenance);
+  --color-status-inactive: var(--status-inactive);
+  --color-status-field: var(--status-field);
+
+  /* Remap Tailwind utility scales used across the app */
+  --color-amber-300: var(--amber-300);
+  --color-amber-400: var(--amber-400);
+  --color-amber-500: var(--amber-500);
+  --color-amber-600: var(--amber-600);
+  --color-blue-500: var(--blue-500);
+  --color-blue-600: var(--blue-600);
+  --color-red-400: var(--red-400);
+  --color-red-500: var(--red-500);
+  --color-red-600: var(--red-600);
+  --color-emerald-400: var(--emerald-400);
+  --color-emerald-500: var(--emerald-500);
+  --color-emerald-600: var(--emerald-600);
+  --color-zinc-400: var(--zinc-400);
+  --color-zinc-500: var(--zinc-500);
 }
 
+/* ──────────────────────────────────────
+   PARTION — Client Palette
+   Extracted from /paleta:
+   #111111, #4E4E4E, #D8D8D8, #FAFAFA, #E94253, #4356A2, #9C4B76
+   ────────────────────────────────────── */
 :root {
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --radius: 0.625rem;
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
-}
+  /* Core palette */
+  --ink-950: #111111;
+  --graphite-700: #4e4e4e;
+  --stone-300: #d8d8d8;
+  --paper-50: #fafafa;
+  --paper-100: #f3f3f4;
+  --coral-300: #f07a86;
+  --coral-400: #ec5a6b;
+  --coral-500: #e94253;
+  --coral-600: #d7375a;
+  --indigo-400: #5c6bb4;
+  --indigo-500: #4356a2;
+  --indigo-600: #394a91;
+  --plum-400: #ad5a87;
+  --plum-500: #9c4b76;
+  --plum-600: #874168;
+  --wine-400: #c95a74;
+  --wine-500: #b44e6d;
+  --wine-600: #9c4565;
+  --zinc-400: #7c7c7c;
+  --zinc-500: #5f5f5f;
 
-.dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  /* bg layers */
+  --background: var(--paper-50);
+  --surface: #ffffff;
+  --surface-raised: #ffffff;
+
+  --foreground: var(--ink-950);
+  --card: rgba(255, 255, 255, 0.82);
+  --card-foreground: var(--ink-950);
+  --popover: #ffffff;
+  --popover-foreground: var(--ink-950);
+
+  /* Brand */
+  --amber-300: var(--coral-300);
+  --amber-400: var(--coral-400);
+  --amber-500: var(--coral-500);
+  --amber-600: var(--coral-600);
+  --amber: var(--coral-500);
+  --amber-foreground: #ffffff;
+  --primary: var(--coral-500);
+  --primary-foreground: #ffffff;
+
+  --blue-500: var(--indigo-500);
+  --blue-600: var(--indigo-600);
+  --electric: var(--indigo-500);
+  --electric-foreground: #ffffff;
+  --secondary: color-mix(in srgb, var(--indigo-500) 8%, white);
+  --secondary-foreground: var(--ink-950);
+
+  --muted: color-mix(in srgb, var(--graphite-700) 8%, white);
+  --muted-foreground: var(--graphite-700);
+  --accent: color-mix(in srgb, var(--plum-500) 10%, white);
+  --accent-foreground: var(--ink-950);
+
+  --red-400: var(--wine-400);
+  --red-500: var(--wine-500);
+  --red-600: var(--wine-600);
+  --destructive: var(--wine-500);
+  --border: color-mix(in srgb, var(--stone-300) 82%, white);
+  --input: color-mix(in srgb, var(--stone-300) 82%, white);
+  --ring: color-mix(in srgb, var(--coral-500) 65%, white);
+
+  /* Status tokens */
+  --emerald-400: var(--plum-400);
+  --emerald-500: var(--plum-500);
+  --emerald-600: var(--plum-600);
+  --status-available: var(--plum-500);
+  --status-reserved: var(--coral-500);
+  --status-maintenance: var(--wine-500);
+  --status-inactive: var(--zinc-500);
+  --status-field: var(--indigo-500);
+
+  /* Charts */
+  --chart-1: var(--coral-500);
+  --chart-2: var(--indigo-500);
+  --chart-3: var(--plum-500);
+  --chart-4: var(--wine-500);
+  --chart-5: var(--graphite-700);
+
+  --radius: 0.625rem;
+
+  /* Sidebar */
+  --sidebar: color-mix(in srgb, var(--paper-50) 78%, white);
+  --sidebar-foreground: var(--ink-950);
+  --sidebar-primary: var(--coral-500);
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: color-mix(in srgb, var(--plum-500) 9%, white);
+  --sidebar-accent-foreground: var(--ink-950);
+  --sidebar-border: color-mix(in srgb, var(--stone-300) 78%, white);
+  --sidebar-ring: var(--coral-500);
 }
 
 @layer base {
@@ -123,8 +184,25 @@
   }
   body {
     @apply bg-background text-foreground;
+    background-image:
+      radial-gradient(circle at top left, color-mix(in srgb, var(--coral-500) 10%, transparent) 0, transparent 32%),
+      radial-gradient(circle at top right, color-mix(in srgb, var(--indigo-500) 11%, transparent) 0, transparent 36%),
+      linear-gradient(180deg, color-mix(in srgb, var(--plum-500) 3%, white), transparent 22%);
+    background-attachment: fixed;
   }
   html {
     @apply font-sans;
+    color-scheme: light;
   }
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--graphite-700) 16%, transparent);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--graphite-700) 28%, transparent);
 }
