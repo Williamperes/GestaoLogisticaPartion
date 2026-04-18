@@ -22,21 +22,19 @@ export default function EventsPage() {
 
   return (
     <div className="space-y-5">
-      {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold">Eventos & OS</h1>
           <p className="text-sm text-muted-foreground mt-0.5">{mockEvents.length} ordens de serviço</p>
         </div>
-        <button className="flex items-center gap-2 px-4 py-2 rounded-lg bg-amber-500 text-black text-sm font-semibold hover:bg-amber-400 transition-colors">
+        <button className="flex w-full items-center justify-center gap-2 rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-black transition-colors hover:bg-amber-400 sm:w-auto">
           <Plus className="w-4 h-4" />
           Nova OS
         </button>
       </div>
 
-      {/* Filters */}
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="flex items-center gap-1 p-1 rounded-lg bg-card border border-border">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+        <div className="flex flex-wrap items-center gap-1 rounded-lg border border-border bg-card p-1">
           {statusFilters.map((f) => (
             <button
               key={f.value}
@@ -51,15 +49,14 @@ export default function EventsPage() {
             </button>
           ))}
         </div>
-        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-card border border-border text-sm text-muted-foreground ml-auto">
+        <div className="flex w-full items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm text-muted-foreground lg:ml-auto lg:max-w-xs">
           <Search className="w-3.5 h-3.5" />
           <span>Buscar evento...</span>
         </div>
       </div>
 
-      {/* Table */}
-      <div className="border border-border rounded-xl bg-card overflow-hidden">
-        <table className="w-full text-sm">
+      <div className="overflow-x-auto rounded-xl border border-border bg-card">
+        <table className="min-w-[680px] w-full text-sm">
           <thead>
             <tr className="border-b border-border">
               <th className="text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Evento</th>

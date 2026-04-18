@@ -15,14 +15,17 @@ export default async function DashboardLayout({ children }: { children: React.Re
   }
 
   return (
-    <div className="flex h-screen overflow-hidden bg-background">
+    <div className="flex h-dvh overflow-hidden bg-background">
       <Sidebar
         userName={context.profile?.fullName ?? context.email ?? "Usuário"}
         userRole={context.role ?? "Sem role"}
       />
-      <div className="flex flex-col flex-1 overflow-hidden">
-        <TopBar />
-        <main className="flex-1 overflow-y-auto p-6">{children}</main>
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <TopBar
+          userName={context.profile?.fullName ?? context.email ?? "Usuário"}
+          userRole={context.role ?? "Sem role"}
+        />
+        <main className="flex-1 overflow-y-auto overflow-x-hidden p-4 sm:p-6">{children}</main>
       </div>
     </div>
   );

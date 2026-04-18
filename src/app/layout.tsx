@@ -10,6 +10,11 @@ const fontMono = Roboto_Mono({ variable: "--font-geist-mono", subsets: ["latin"]
 export const metadata: Metadata = {
   title: "Partion — Gestão Logística AV",
   description: "Plataforma de gestão logística e proteção patrimonial para eventos audiovisuais",
+  icons: {
+    icon: "/small-logo.png",
+    shortcut: "/small-logo.png",
+    apple: "/small-logo.png",
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

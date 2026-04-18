@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
@@ -15,11 +16,13 @@ import {
   ChevronRight,
   Bell,
   Settings,
-  Zap,
+  Menu,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { signOut } from "@/app/(auth)/actions";
+import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
+import { Button } from "@/components/ui/button";
 
 const navGroups = [
   {
@@ -38,43 +41,74 @@ const navGroups = [
   },
 ];
 
-export function Sidebar({
+function SidebarContent({
   userName,
   userRole,
+  collapsed,
+  onToggleCollapsed,
+  onItemSelect,
+  mobile = false,
 }: {
   userName: string;
   userRole: string;
+  collapsed: boolean;
+  onToggleCollapsed?: () => void;
+  onItemSelect?: () => void;
+  mobile?: boolean;
 }) {
-  const [collapsed, setCollapsed] = useState(false);
   const pathname = usePathname();
+
+  const containerClasses = mobile
+    ? "relative flex h-full flex-col overflow-hidden bg-sidebar"
+    : "relative flex h-dvh flex-col overflow-hidden border-r border-sidebar-border bg-sidebar";
 
   return (
     <motion.aside
-      animate={{ width: collapsed ? 64 : 220 }}
+      animate={mobile ? undefined : { width: collapsed ? 64 : 220 }}
       transition={{ type: "spring", stiffness: 300, damping: 30 }}
-      className="relative flex flex-col h-screen bg-sidebar border-r border-sidebar-border z-30 shrink-0 overflow-hidden"
+      className={containerClasses}
     >
-      {/* Logo */}
-      <div className="flex items-center gap-3 px-4 h-14 border-b border-sidebar-border shrink-0">
-        <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-amber-500 shrink-0">
-          <Zap className="w-4 h-4 text-black" />
-        </div>
+      <div className="flex h-14 items-center justify-center border-b border-sidebar-border px-3 shrink-0">
         <AnimatePresence>
-          {!collapsed && (
-            <motion.span
+          {collapsed ? (
+            <motion.div
+              key="small-logo"
+              initial={{ opacity: 0, scale: 0.92 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.92 }}
+              transition={{ duration: 0.15 }}
+            >
+              <Image
+                src="/small-logo.png"
+                alt="Partion"
+                width={32}
+                height={32}
+                className="h-8 w-8 object-contain"
+                priority
+              />
+            </motion.div>
+          ) : (
+            <motion.div
+              key="logo"
               initial={{ opacity: 0, x: -8 }}
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: -8 }}
               transition={{ duration: 0.15 }}
-              className="font-bold text-sm tracking-widest text-foreground uppercase"
+              className="flex w-full items-center justify-center"
             >
-              Partion
-            </motion.span>
+              <Image
+                src="/logo.png"
+                alt="Partion"
+                width={140}
+                height={36}
+                className="h-8 w-auto object-contain"
+                priority
+              />
+            </motion.div>
           )}
         </AnimatePresence>
       </div>
 
-      {/* Nav */}
       <nav className="flex-1 overflow-y-auto py-4 px-2 space-y-6">
         {navGroups.map((group) => (
           <div key={group.label}>
@@ -97,7 +131,7 @@ export function Sidebar({
                           };
                           void nativeButton;
 
-                          return <Link href={item.href} {...linkProps} />;
+                          return <Link href={item.href} onClick={onItemSelect} {...linkProps} />;
                         }}
                         className={cn(
                           "flex items-center gap-3 px-2 py-2 rounded-lg text-sm font-medium transition-all duration-150",
@@ -128,7 +162,7 @@ export function Sidebar({
                           </Badge>
                         )}
                       </TooltipTrigger>
-                      {collapsed && (
+                      {!mobile && collapsed && (
                         <TooltipContent side="right" className="text-xs">
                           {item.label}
                         </TooltipContent>
@@ -142,7 +176,6 @@ export function Sidebar({
         ))}
       </nav>
 
-      {/* Bottom actions */}
       <div className="px-2 pb-4 space-y-0.5">
         <Tooltip>
           <TooltipTrigger
@@ -166,7 +199,7 @@ export function Sidebar({
               )}
             </AnimatePresence>
           </TooltipTrigger>
-          {collapsed && <TooltipContent side="right">Notificações</TooltipContent>}
+          {!mobile && collapsed && <TooltipContent side="right">Notificações</TooltipContent>}
         </Tooltip>
         <Tooltip>
           <TooltipTrigger
@@ -190,7 +223,7 @@ export function Sidebar({
               )}
             </AnimatePresence>
           </TooltipTrigger>
-          {collapsed && <TooltipContent side="right">Configurações</TooltipContent>}
+          {!mobile && collapsed && <TooltipContent side="right">Configurações</TooltipContent>}
         </Tooltip>
 
         <form action={signOut} className="mt-2">
@@ -226,17 +259,71 @@ export function Sidebar({
         </form>
       </div>
 
-      {/* Collapse toggle */}
-      <button
-        onClick={() => setCollapsed(!collapsed)}
-        className="absolute right-[-12px] top-14 w-6 h-6 rounded-full border border-border bg-background flex items-center justify-center hover:bg-muted transition-colors z-40"
-      >
-        {collapsed ? (
-          <ChevronRight className="w-3 h-3 text-muted-foreground" />
-        ) : (
-          <ChevronLeft className="w-3 h-3 text-muted-foreground" />
-        )}
-      </button>
+      {!mobile && onToggleCollapsed && (
+        <button
+          onClick={onToggleCollapsed}
+          className="absolute right-[-12px] top-14 z-40 flex h-6 w-6 items-center justify-center rounded-full border border-border bg-background transition-colors hover:bg-muted"
+        >
+          {collapsed ? (
+            <ChevronRight className="w-3 h-3 text-muted-foreground" />
+          ) : (
+            <ChevronLeft className="w-3 h-3 text-muted-foreground" />
+          )}
+        </button>
+      )}
     </motion.aside>
+  );
+}
+
+export function Sidebar({
+  userName,
+  userRole,
+}: {
+  userName: string;
+  userRole: string;
+}) {
+  const [collapsed, setCollapsed] = useState(false);
+
+  return (
+    <div className="hidden md:block">
+        <SidebarContent
+          userName={userName}
+          userRole={userRole}
+          collapsed={collapsed}
+          onToggleCollapsed={() => setCollapsed((current) => !current)}
+      />
+    </div>
+  );
+}
+
+export function MobileSidebar({
+  userName,
+  userRole,
+}: {
+  userName: string;
+  userRole: string;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <Sheet open={open} onOpenChange={setOpen}>
+      <SheetTrigger
+        render={
+          <Button variant="ghost" size="icon-sm" className="md:hidden" aria-label="Abrir menu" />
+        }
+      >
+        <Menu className="h-4 w-4" />
+      </SheetTrigger>
+      <SheetContent side="left" className="w-[88vw] max-w-xs p-0">
+        <SheetTitle className="sr-only">Menu principal</SheetTitle>
+        <SidebarContent
+          userName={userName}
+          userRole={userRole}
+          collapsed={false}
+          mobile
+          onItemSelect={() => setOpen(false)}
+        />
+      </SheetContent>
+    </Sheet>
   );
 }

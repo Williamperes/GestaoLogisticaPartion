@@ -30,13 +30,12 @@ const COLORS = ["#F59E0B", "#3B82F6", "#10B981", "#EF4444", "#8B5CF6"];
 export default function DashboardPage() {
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-foreground">Visão Geral</h1>
           <p className="text-sm text-muted-foreground mt-0.5">Março 2025 • Atualizado agora</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {mockKPIs.activeAlerts > 0 && (
             <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/10 text-amber-600 text-sm font-medium border border-amber-500/20">
               <AlertTriangle className="w-4 h-4" />
@@ -46,8 +45,7 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* KPI Cards */}
-      <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <CardSpotlight>
           <div className="flex items-start justify-between">
             <div>
@@ -103,9 +101,7 @@ export default function DashboardPage() {
         </CardSpotlight>
       </div>
 
-      {/* Charts Row */}
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-        {/* Utilization Chart */}
         <div className="xl:col-span-2 border border-border rounded-xl bg-card p-5">
           <h2 className="text-sm font-semibold text-foreground mb-4">Taxa de Utilização de Equipamentos</h2>
           <ResponsiveContainer width="100%" height={180}>
@@ -129,10 +125,9 @@ export default function DashboardPage() {
           </ResponsiveContainer>
         </div>
 
-        {/* Category Pie */}
         <div className="border border-border rounded-xl bg-card p-5">
           <h2 className="text-sm font-semibold text-foreground mb-4">Por Categoria</h2>
-          <div className="flex items-center gap-4">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
             <PieChart width={100} height={100}>
               <Pie data={mockCategoryChart} cx={45} cy={45} innerRadius={28} outerRadius={45} paddingAngle={3} dataKey="value">
                 {mockCategoryChart.map((_, index) => (
@@ -155,7 +150,6 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Upcoming Events */}
       <div className="border border-border rounded-xl bg-card">
         <div className="flex items-center justify-between px-5 py-4 border-b border-border">
           <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
@@ -171,7 +165,7 @@ export default function DashboardPage() {
             <li key={event.id}>
               <Link
                 href={`/events/${event.id}`}
-                className="flex items-center gap-4 px-5 py-3.5 hover:bg-black/3 transition-colors group"
+                className="group flex flex-col gap-3 px-5 py-3.5 transition-colors hover:bg-black/3 sm:flex-row sm:items-center"
               >
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-foreground group-hover:text-amber-600 transition-colors truncate">
@@ -181,7 +175,7 @@ export default function DashboardPage() {
                     {event.client} • {event.city} • {new Date(event.startDate).toLocaleDateString("pt-BR")}
                   </p>
                 </div>
-                <div className="flex items-center gap-3 shrink-0">
+                <div className="flex items-center gap-3 sm:shrink-0">
                   <StatusBadge status={event.status} type="event" />
                   <ArrowUpRight className="w-3.5 h-3.5 text-muted-foreground/50 group-hover:text-amber-600 transition-colors" />
                 </div>
@@ -191,7 +185,6 @@ export default function DashboardPage() {
         </ul>
       </div>
 
-      {/* Alerts */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="border border-amber-500/20 rounded-xl bg-amber-500/5 p-4">
           <div className="flex items-center gap-2 mb-2">
