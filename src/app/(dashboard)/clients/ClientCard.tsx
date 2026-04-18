@@ -8,6 +8,7 @@ import type { ClientOrganization } from "@/lib/clients";
 import { formatPhoneNumber } from "@/lib/utils";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
+import { DeleteConfirmDialog } from "@/components/ui/delete-confirm-dialog";
 import { PhoneInput } from "@/components/ui/PhoneInput";
 
 export function ClientCard({ client }: { client: ClientOrganization }) {
@@ -145,20 +146,21 @@ export function ClientCard({ client }: { client: ClientOrganization }) {
 
 function DeleteClientButton({ clientId, clientName }: { clientId: string; clientName: string }) {
   return (
-    <form action={deleteClient}>
-      <input type="hidden" name="id" value={clientId} />
-      <button
-        type="submit"
-        className="inline-flex size-7 items-center justify-center rounded-xl border border-red-500/20 bg-background text-red-600 transition hover:border-red-500/30 hover:bg-red-500/8 disabled:pointer-events-none disabled:opacity-50"
-        onClick={(event) => {
-          if (!window.confirm(`Apagar o cliente ${clientName}?`)) {
-            event.preventDefault();
-          }
-        }}
-      >
+    <DeleteConfirmDialog
+      action={deleteClient}
+      itemId={clientId}
+      itemName={clientName}
+      itemLabel="cliente"
+      pendingLabel="Apagando cliente..."
+      render={
+        <button
+          type="button"
+          className="inline-flex size-7 items-center justify-center rounded-xl border border-red-500/20 bg-background text-red-600 transition hover:border-red-500/30 hover:bg-red-500/8"
+        />
+      }
+    >
         <Trash2 className="h-4 w-4" />
-      </button>
-    </form>
+    </DeleteConfirmDialog>
   );
 }
 

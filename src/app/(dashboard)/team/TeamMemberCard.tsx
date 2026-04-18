@@ -7,6 +7,7 @@ import type { TeamMember } from "@/lib/team-shared";
 import { formatPhoneNumber } from "@/lib/utils";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
+import { DeleteConfirmDialog } from "@/components/ui/delete-confirm-dialog";
 import { PhoneInput } from "@/components/ui/PhoneInput";
 import { useFormStatus } from "react-dom";
 
@@ -113,7 +114,7 @@ export function TeamMemberCard({ member }: { member: TeamMember }) {
                   </label>
                 </div>
 
-                <TeamMemberCardActions memberName={member.name} />
+                <TeamMemberCardActions memberId={member.id} memberName={member.name} />
               </form>
             </SheetContent>
           </Sheet>
@@ -151,8 +152,7 @@ export function TeamMemberCard({ member }: { member: TeamMember }) {
   );
 }
 
-function TeamMemberCardActions({ memberName }: { memberName: string }) {
-  const [submitIntent, setSubmitIntent] = useState<"save" | "delete">("save");
+function TeamMemberCardActions({ memberId, memberName }: { memberId: string; memberName: string }) {
   const { pending } = useFormStatus();
 
   return (
@@ -161,47 +161,43 @@ function TeamMemberCardActions({ memberName }: { memberName: string }) {
         type="submit"
         disabled={pending}
         className="h-11 rounded-2xl text-sm font-semibold"
-        onClick={() => setSubmitIntent("save")}
       >
-        {pending && submitIntent === "save" ? "Salvando alterações..." : "Salvar alterações"}
+        {pending ? "Salvando alterações..." : "Salvar alterações"}
       </Button>
 
-      <Button
-        type="submit"
-        formAction={deleteTeamMember}
-        variant="destructive"
-        disabled={pending}
-        className="h-11 rounded-2xl text-sm font-semibold"
-        onClick={(event) => {
-          setSubmitIntent("delete");
-
-          if (!window.confirm(`Apagar o técnico ${memberName}?`)) {
-            event.preventDefault();
-          }
-        }}
+      <DeleteConfirmDialog
+        action={deleteTeamMember}
+        itemId={memberId}
+        itemName={memberName}
+        itemLabel="técnico"
+        pendingLabel="Apagando técnico..."
+        render={
+          <Button type="button" variant="destructive" className="h-11 rounded-2xl text-sm font-semibold" />
+        }
       >
         <Trash2 className="h-4 w-4" />
-        {pending && submitIntent === "delete" ? "Apagando técnico..." : "Apagar técnico"}
-      </Button>
+        Apagar técnico
+      </DeleteConfirmDialog>
     </div>
   );
 }
 
 function DeleteTeamMemberButton({ memberId, memberName }: { memberId: string; memberName: string }) {
   return (
-    <form action={deleteTeamMember}>
-      <input type="hidden" name="id" value={memberId} />
-      <button
-        type="submit"
-        className="inline-flex size-7 items-center justify-center rounded-xl border border-red-500/20 bg-background text-red-600 transition hover:border-red-500/30 hover:bg-red-500/8 disabled:pointer-events-none disabled:opacity-50"
-        onClick={(event) => {
-          if (!window.confirm(`Apagar o técnico ${memberName}?`)) {
-            event.preventDefault();
-          }
-        }}
-      >
+    <DeleteConfirmDialog
+      action={deleteTeamMember}
+      itemId={memberId}
+      itemName={memberName}
+      itemLabel="técnico"
+      pendingLabel="Apagando técnico..."
+      render={
+        <button
+          type="button"
+          className="inline-flex size-7 items-center justify-center rounded-xl border border-red-500/20 bg-background text-red-600 transition hover:border-red-500/30 hover:bg-red-500/8"
+        />
+      }
+    >
         <Trash2 className="h-4 w-4" />
-      </button>
-    </form>
+    </DeleteConfirmDialog>
   );
 }
