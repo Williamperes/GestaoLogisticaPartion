@@ -21,5 +21,5 @@ export function canAccessArea(role: AppRole | null | undefined, area: keyof type
     return false;
   }
 
-  return DASHBOARD_AREAS[area].includes(role);
+  return (DASHBOARD_AREAS[area] as readonly AppRole[]).includes(role);
 }

@@ -47,7 +47,7 @@ export async function createTeamMember(formData: FormData) {
   }
 
   revalidatePath("/team");
-  redirect("/team?success=Técnico cadastrado.");
+  redirect(`/team?success=${encodeURIComponent("Técnico cadastrado.")}`);
 }
 
 export async function updateTeamMember(formData: FormData) {
@@ -89,7 +89,7 @@ export async function updateTeamMember(formData: FormData) {
   }
 
   revalidatePath("/team");
-  redirect("/team?success=Técnico atualizado.");
+  redirect(`/team?success=${encodeURIComponent("Técnico atualizado.")}`);
 }
 
 export async function deleteTeamMember(formData: FormData) {
@@ -103,7 +103,7 @@ export async function deleteTeamMember(formData: FormData) {
   const id = String(formData.get("id") ?? "").trim();
 
   if (!organizationId || !id) {
-    redirect("/team?error=Técnico inválido.");
+    redirect(`/team?error=${encodeURIComponent("Técnico inválido.")}`);
   }
 
   const supabase = createSupabaseAdminClient();
@@ -118,5 +118,5 @@ export async function deleteTeamMember(formData: FormData) {
   }
 
   revalidatePath("/team");
-  redirect("/team?success=Técnico apagado.");
+  redirect(`/team?success=${encodeURIComponent("Técnico apagado.")}`);
 }

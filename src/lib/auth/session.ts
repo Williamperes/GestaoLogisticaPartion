@@ -47,7 +47,11 @@ export const getCurrentAuthUser = cache(async () => {
   } = await supabase.auth.getUser();
 
   if (error) {
-    if (error.name === "AuthSessionMissingError") {
+    // Sessão ausente ou refresh token inválido/expirado → trata como não autenticado
+    if (
+      error.name === "AuthSessionMissingError" ||
+      error.message?.toLowerCase().includes("refresh token")
+    ) {
       return null;
     }
 

@@ -25,11 +25,6 @@ export function TeamMemberCard({ member }: { member: TeamMember }) {
       <div className="flex items-center gap-3 mb-3">
         <div className="relative w-12 h-12 rounded-full bg-gradient-to-br from-amber-500/20 to-amber-500/30 flex items-center justify-center">
           <span className="text-sm font-bold text-amber-600">{initials}</span>
-          <span
-            className={`absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-background ${
-              member.available ? "bg-emerald-400" : "bg-zinc-500"
-            }`}
-          />
         </div>
 
         <div className="min-w-0 flex-1">
@@ -108,10 +103,7 @@ export function TeamMemberCard({ member }: { member: TeamMember }) {
                     />
                   </label>
 
-                  <label className="flex items-center gap-3 rounded-2xl border border-border bg-background px-4 py-3">
-                    <input type="checkbox" name="available" defaultChecked={member.available} className="h-4 w-4 accent-[var(--color-primary)]" />
-                    <span className="text-sm text-foreground">Disponível para alocação</span>
-                  </label>
+                  <input type="hidden" name="available" value="on" />
                 </div>
 
                 <TeamMemberCardActions memberId={member.id} memberName={member.name} />
@@ -126,13 +118,6 @@ export function TeamMemberCard({ member }: { member: TeamMember }) {
       <div className="flex items-center justify-between">
         <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
           {member.role}
-        </span>
-        <span
-          className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
-            member.available ? "bg-emerald-500/15 text-emerald-600" : "bg-zinc-500/15 text-zinc-400"
-          }`}
-        >
-          {member.available ? "Disponível" : "Ocupado"}
         </span>
       </div>
 

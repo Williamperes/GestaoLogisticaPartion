@@ -81,10 +81,7 @@ export function TeamToolbar() {
                 />
               </label>
 
-              <label className="flex items-center gap-3 rounded-2xl border border-border bg-background px-4 py-3">
-                <input type="checkbox" name="available" defaultChecked className="h-4 w-4 accent-[var(--color-primary)]" />
-                <span className="text-sm text-foreground">Disponível para alocação</span>
-              </label>
+              <input type="hidden" name="available" value="on" />
             </div>
 
             <div className="mt-auto border-t border-border bg-background/60 px-6 py-4">

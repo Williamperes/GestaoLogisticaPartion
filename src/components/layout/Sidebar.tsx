@@ -124,15 +124,9 @@ function SidebarContent({
                   <li key={item.href}>
                     <Tooltip>
                       <TooltipTrigger
-                        nativeButton={false}
-                        render={(props) => {
-                          const { nativeButton, ...linkProps } = props as React.ComponentPropsWithoutRef<"a"> & {
-                            nativeButton?: boolean;
-                          };
-                          void nativeButton;
-
-                          return <Link href={item.href} onClick={onItemSelect} {...linkProps} />;
-                        }}
+                        render={(props) => (
+                          <Link href={item.href} onClick={onItemSelect} {...(props as React.ComponentPropsWithoutRef<"a">)} />
+                        )}
                         className={cn(
                           "flex items-center gap-3 px-2 py-2 rounded-lg text-sm font-medium transition-all duration-150",
                           active
@@ -179,15 +173,9 @@ function SidebarContent({
       <div className="px-2 pb-4 space-y-0.5">
         <Tooltip>
           <TooltipTrigger
-            nativeButton={false}
-            render={(props) => {
-              const { nativeButton, ...linkProps } = props as React.ComponentPropsWithoutRef<"a"> & {
-                nativeButton?: boolean;
-              };
-              void nativeButton;
-
-              return <Link href="#" {...linkProps} />;
-            }}
+            render={(props) => (
+              <Link href="#" {...(props as React.ComponentPropsWithoutRef<"a">)} />
+            )}
             className="flex items-center gap-3 px-2 py-2 rounded-lg text-sm text-sidebar-foreground/60 hover:bg-black/5 hover:text-sidebar-foreground transition-all"
           >
             <Bell className="w-4.5 h-4.5 shrink-0" />
@@ -203,15 +191,9 @@ function SidebarContent({
         </Tooltip>
         <Tooltip>
           <TooltipTrigger
-            nativeButton={false}
-            render={(props) => {
-              const { nativeButton, ...linkProps } = props as React.ComponentPropsWithoutRef<"a"> & {
-                nativeButton?: boolean;
-              };
-              void nativeButton;
-
-              return <Link href="#" {...linkProps} />;
-            }}
+            render={(props) => (
+              <Link href="#" {...(props as React.ComponentPropsWithoutRef<"a">)} />
+            )}
             className="flex items-center gap-3 px-2 py-2 rounded-lg text-sm text-sidebar-foreground/60 hover:bg-black/5 hover:text-sidebar-foreground transition-all"
           >
             <Settings className="w-4.5 h-4.5 shrink-0" />
