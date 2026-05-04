@@ -1,9 +1,10 @@
 import { cn } from "@/lib/utils";
-import type { ItemStatus, EventStatus } from "@/lib/mock-data";
+import type { EventStatus } from "@/lib/events";
+import type { ItemStatus } from "@/lib/mock-data";
 
 const eventStatusMap: Record<EventStatus, { label: string; className: string }> = {
   planning: { label: "Planejamento", className: "bg-blue-500/15 text-blue-600 ring-1 ring-blue-500/30" },
-  gate_open: { label: "Gate Liberado", className: "bg-emerald-500/15 text-emerald-600 ring-1 ring-emerald-500/30" },
+  ready_to_load: { label: "Pronto p/ Carga", className: "bg-emerald-500/15 text-emerald-600 ring-1 ring-emerald-500/30" },
   in_field: { label: "Em Campo", className: "bg-amber-500/15 text-amber-600 ring-1 ring-amber-500/30" },
   completed: { label: "Concluído", className: "bg-black/8 text-muted-foreground ring-1 ring-border" },
   cancelled: { label: "Cancelado", className: "bg-red-500/15 text-red-600 ring-1 ring-red-500/30" },
