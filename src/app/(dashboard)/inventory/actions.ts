@@ -323,3 +323,80 @@ export async function updateBulkInventory(formData: FormData) {
   revalidatePath(`/inventory/${equipmentId}`);
   redirect(`/inventory/${equipmentId}?success=Estoque atualizado.`);
 }
+
+// ──────────────────────────────────────────────────────────────────
+// createCategory / renameCategory / deleteCategory
+// ──────────────────────────────────────────────────────────────────
+
+export async function createCategory(formData: FormData) {
+  const context = await requireWriteRole();
+
+  const organizationId = context.primaryOrganization?.id;
+  if (!organizationId) {
+    redirect("/inventory/categories?error=Organização não encontrada.");
+  }
+
+  const name = String(formData.get("name") ?? "").trim();
+  if (!name) redirect("/inventory/categories?error=Nome é obrigatório.");
+
+  const supabase = createSupabaseAdminClient();
+  const { error } = await supabase
+    .from("equipment_categories")
+    .insert({ organization_id: organizationId, name });
+
+  if (error) redirect(`/inventory/categories?error=${encodeURIComponent(error.message)}`);
+
+  revalidatePath("/inventory/categories");
+  redirect("/inventory/categories?success=Categoria criada.");
+}
+
+export async function renameCategory(formData: FormData) {
+  await requireWriteRole();
+
+  const categoryId = String(formData.get("categoryId") ?? "").trim();
+  const name = String(formData.get("name") ?? "").trim();
+
+  if (!categoryId || !name) redirect("/inventory/categories?error=Dados inválidos.");
+
+  const supabase = createSupabaseAdminClient();
+  const { error } = await supabase
+    .from("equipment_categories")
+    .update({ name })
+    .eq("id", categoryId);
+
+  if (error) redirect(`/inventory/categories?error=${encodeURIComponent(error.message)}`);
+
+  revalidatePath("/inventory/categories");
+  revalidatePath("/inventory");
+  redirect("/inventory/categories?success=Categoria renomeada.");
+}
+
+export async function deleteCategory(formData: FormData) {
+  await requireWriteRole();
+
+  const categoryId = String(formData.get("categoryId") ?? "").trim();
+  if (!categoryId) redirect("/inventory/categories?error=Categoria inválida.");
+
+  const supabase = createSupabaseAdminClient();
+
+  const { count, error: countError } = await supabase
+    .from("equipment")
+    .select("id", { count: "exact", head: true })
+    .eq("category_id", categoryId);
+
+  if (countError) redirect(`/inventory/categories?error=${encodeURIComponent(countError.message)}`);
+  if (count && count > 0) {
+    redirect("/inventory/categories?error=Categoria possui equipamentos vinculados. Remova ou reatribua-os primeiro.");
+  }
+
+  const { error } = await supabase
+    .from("equipment_categories")
+    .delete()
+    .eq("id", categoryId);
+
+  if (error) redirect(`/inventory/categories?error=${encodeURIComponent(error.message)}`);
+
+  revalidatePath("/inventory/categories");
+  revalidatePath("/inventory");
+  redirect("/inventory/categories?success=Categoria excluída.");
+}

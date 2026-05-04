@@ -31,6 +31,9 @@ import {
   addEquipmentUnit,
   deleteEquipmentUnit,
   updateBulkInventory,
+  createCategory,
+  renameCategory,
+  deleteCategory,
 } from "@/app/(dashboard)/inventory/actions";
 
 function buildFormData(values: Record<string, string>) {
@@ -398,6 +401,106 @@ describe("inventory actions", () => {
           buildFormData({ equipmentId: "equip-1", totalQty: "abc", availableQty: "0" })
         )
       ).rejects.toThrow("NEXT_REDIRECT:/inventory/equip-1?error=Quantidades inválidas.");
+    });
+  });
+
+  // ── createCategory ────────────────────────────────────────────────
+
+  describe("createCategory", () => {
+    it("inserts category with org id and redirects with success", async () => {
+      const insertFn = vi.fn().mockResolvedValue({ error: null });
+
+      mocks.createSupabaseAdminClient.mockReturnValue({
+        from: vi.fn().mockReturnValue({ insert: insertFn }),
+      });
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+
+      await expect(
+        createCategory(buildFormData({ name: "Vídeo" }))
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory/categories?success=Categoria criada.");
+
+      expect(insertFn).toHaveBeenCalledWith({ organization_id: "org-1", name: "Vídeo" });
+    });
+
+    it("rejects when name is empty", async () => {
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+      await expect(
+        createCategory(buildFormData({ name: "" }))
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory/categories?error=Nome é obrigatório.");
+    });
+  });
+
+  // ── renameCategory ────────────────────────────────────────────────
+
+  describe("renameCategory", () => {
+    it("updates category name and redirects with success", async () => {
+      const updateResult = vi.fn().mockResolvedValue({ error: null });
+      const eqFn = vi.fn().mockReturnValue(updateResult);
+      const updateFn = vi.fn().mockReturnValue({ eq: eqFn });
+
+      mocks.createSupabaseAdminClient.mockReturnValue({
+        from: vi.fn().mockReturnValue({ update: updateFn }),
+      });
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+
+      await expect(
+        renameCategory(buildFormData({ categoryId: "cat-1", name: "Áudio Renamed" }))
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory/categories?success=Categoria renomeada.");
+
+      expect(updateFn).toHaveBeenCalledWith({ name: "Áudio Renamed" });
+      expect(eqFn).toHaveBeenCalledWith("id", "cat-1");
+      expect(mocks.revalidatePath).toHaveBeenCalledWith("/inventory");
+    });
+  });
+
+  // ── deleteCategory ────────────────────────────────────────────────
+
+  describe("deleteCategory", () => {
+    it("deletes when no equipment linked", async () => {
+      const deleteResult = vi.fn().mockResolvedValue({ error: null });
+      const deleteEqFn = vi.fn().mockReturnValue(deleteResult);
+      const deleteFn = vi.fn().mockReturnValue({ eq: deleteEqFn });
+
+      mocks.createSupabaseAdminClient.mockReturnValue({
+        from: vi.fn((table: string) => {
+          if (table === "equipment") {
+            return {
+              select: vi.fn().mockReturnValue({
+                eq: vi.fn().mockResolvedValue({ count: 0, error: null }),
+              }),
+            };
+          }
+          if (table === "equipment_categories") return { delete: deleteFn };
+          return {};
+        }),
+      });
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+
+      await expect(
+        deleteCategory(buildFormData({ categoryId: "cat-1" }))
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory/categories?success=Categoria excluída.");
+
+      expect(deleteEqFn).toHaveBeenCalledWith("id", "cat-1");
+    });
+
+    it("blocks deletion when equipment is linked", async () => {
+      mocks.createSupabaseAdminClient.mockReturnValue({
+        from: vi.fn((table: string) => {
+          if (table === "equipment") {
+            return {
+              select: vi.fn().mockReturnValue({
+                eq: vi.fn().mockResolvedValue({ count: 3, error: null }),
+              }),
+            };
+          }
+          return {};
+        }),
+      });
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+
+      await expect(
+        deleteCategory(buildFormData({ categoryId: "cat-1" }))
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory/categories?error=");
     });
   });
 });
