@@ -1,129 +1,258 @@
-"use client";
+import Link from "next/link";
+import { redirect } from "next/navigation";
+import { ChevronRight, Package, Layers } from "lucide-react";
 
+import { getCurrentUserContext } from "@/lib/auth/session";
 import {
-  Package,
-  QrCode,
-  ChevronRight,
-  CalendarDays,
-  AlertTriangle,
-  Wrench,
-  CheckCircle2,
-} from "lucide-react";
+  getEquipmentById,
+  listEquipmentCategories,
+  formatPurchaseValue,
+} from "@/lib/inventory";
 import { StatusBadge } from "@/components/ui/StatusBadge";
-import { mockInventoryDetail } from "@/lib/mock-data";
-import { Badge } from "@/components/ui/badge";
+import { DeleteConfirmDialog } from "@/components/ui/delete-confirm-dialog";
+import { deleteEquipmentUnit } from "@/app/(dashboard)/inventory/actions";
 
-export default function InventoryDetailPage() {
-  const item = mockInventoryDetail;
+import { EditEquipmentSheet } from "@/app/(dashboard)/inventory/[id]/EditEquipmentSheet";
+import { AddUnitSheet } from "@/app/(dashboard)/inventory/[id]/AddUnitSheet";
+import { UnitStatusForm } from "@/app/(dashboard)/inventory/[id]/UnitStatusForm";
+import { BulkAdjustDialog } from "@/app/(dashboard)/inventory/[id]/BulkAdjustDialog";
+
+interface Props {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ success?: string; error?: string }>;
+}
+
+export default async function InventoryDetailPage({ params, searchParams }: Props) {
+  const { id } = await params;
+  const { success, error: errorMsg } = await searchParams;
+
+  const context = await getCurrentUserContext();
+  const equipment = await getEquipmentById(id);
+
+  if (!equipment) redirect("/inventory");
+
+  const categories = context?.primaryOrganization?.id
+    ? await listEquipmentCategories(context.primaryOrganization.id)
+    : [];
+
+  const canWrite = ["super_admin", "admin", "operations", "warehouse"].includes(
+    context?.role ?? ""
+  );
 
   return (
-    <div className="space-y-6 max-w-4xl">
+    <div className="max-w-4xl space-y-6">
       {/* Breadcrumb */}
       <nav className="flex items-center gap-1.5 text-xs text-muted-foreground">
-        <span>Inventário</span>
-        <ChevronRight className="w-3.5 h-3.5" />
-        <span className="text-foreground font-medium">{item.name}</span>
+        <Link href="/inventory" className="transition-colors hover:text-foreground">
+          Inventário
+        </Link>
+        <ChevronRight className="h-3.5 w-3.5" />
+        <span className="font-medium text-foreground">{equipment.name}</span>
       </nav>
 
-      {/* Header */}
-      <div className="flex flex-col md:flex-row gap-5">
-        {/* QR + Info */}
-        <div className="border border-border bg-card rounded-xl p-5 flex gap-5 flex-1">
-          {/* QR Code placeholder */}
-          <div className="w-20 h-20 rounded-lg border border-border bg-black/5 flex items-center justify-center shrink-0">
-            <QrCode className="w-10 h-10 text-muted-foreground/30" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-3 mb-1">
-              <h1 className="text-xl font-bold">{item.name}</h1>
-              <StatusBadge status={item.status} type="item" />
-            </div>
-            <p className="text-sm text-muted-foreground">{item.brand} — {item.model}</p>
-            <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground mt-2">
-              <span>Patrimônio: <span className="font-mono text-foreground">{item.patrimony}</span></span>
-              <span>Serial: <span className="font-mono text-foreground">{item.serial}</span></span>
-              <span>Categoria: <Badge variant="outline" className="text-[10px] px-1.5 py-0 border-border">{item.category}</Badge></span>
-            </div>
-          </div>
+      {/* Toast messages */}
+      {success && (
+        <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/8 px-4 py-3 text-sm text-emerald-600">
+          {decodeURIComponent(success)}
         </div>
-
-        {/* Metadata */}
-        <div className="border border-border bg-card rounded-xl p-5 w-full md:w-52 shrink-0">
-          <dl className="space-y-3 text-xs">
-            <div>
-              <dt className="text-muted-foreground">Categoria</dt>
-              <dd className="font-medium text-foreground mt-0.5">{item.category}</dd>
-            </div>
-            <div>
-              <dt className="text-muted-foreground">Aquisição</dt>
-              <dd className="font-medium text-foreground mt-0.5">{new Date(item.purchaseDate).toLocaleDateString("pt-BR")}</dd>
-            </div>
-            <div>
-              <dt className="text-muted-foreground">Valor</dt>
-              <dd className="font-medium text-foreground mt-0.5">{item.purchaseValue}</dd>
-            </div>
-          </dl>
-        </div>
-      </div>
-
-      {/* Maintenance Alert */}
-      {item.status === "maintenance" && (
-        <div className="border border-red-500/30 bg-red-500/8 rounded-xl p-4 flex items-start gap-3">
-          <AlertTriangle className="w-4.5 h-4.5 text-red-600 shrink-0 mt-0.5" />
-          <div>
-            <p className="text-sm font-semibold text-red-600">Item em Manutenção</p>
-            <p className="text-xs text-muted-foreground mt-0.5">{item.maintenanceLog[0]?.issue}</p>
-            <p className="text-xs text-muted-foreground">Reportado por {item.maintenanceLog[0]?.reportedBy}</p>
-          </div>
+      )}
+      {errorMsg && (
+        <div className="rounded-xl border border-red-500/30 bg-red-500/8 px-4 py-3 text-sm text-red-600">
+          {decodeURIComponent(errorMsg)}
         </div>
       )}
 
-      {/* History & Maintenance */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-        {/* Usage history */}
-        <div className="border border-border bg-card rounded-xl overflow-hidden">
-          <div className="px-5 py-3.5 border-b border-border flex items-center gap-2">
-            <CalendarDays className="w-4 h-4 text-amber-600" />
-            <h2 className="text-sm font-semibold">Histórico de Uso</h2>
+      {/* Header */}
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex items-center gap-3">
+          {equipment.type === "bulk" ? (
+            <Layers className="h-7 w-7 text-amber-600" />
+          ) : (
+            <Package className="h-7 w-7 text-amber-600" />
+          )}
+          <div>
+            <h1 className="text-2xl font-bold">{equipment.name}</h1>
+            <p className="text-sm text-muted-foreground">
+              {equipment.categoryName ?? "Sem categoria"}
+            </p>
           </div>
-          <ul className="divide-y divide-border">
-            {item.history.map((h, i) => (
-              <li key={i} className="px-5 py-3 flex items-center gap-3">
-                <span className="w-8 h-8 rounded-full bg-black/5 flex items-center justify-center shrink-0">
-                  <Package className="w-3.5 h-3.5 text-muted-foreground" />
-                </span>
-                <div>
-                  <p className="text-sm font-medium">{h.event}</p>
-                  <p className="text-xs text-muted-foreground">{h.role} • {new Date(h.date).toLocaleDateString("pt-BR")}</p>
-                </div>
-              </li>
-            ))}
-          </ul>
+          <StatusBadge status={equipment.status} type="item" />
         </div>
-
-        {/* Maintenance log */}
-        <div className="border border-border bg-card rounded-xl overflow-hidden">
-          <div className="px-5 py-3.5 border-b border-border flex items-center gap-2">
-            <Wrench className="w-4 h-4 text-amber-600" />
-            <h2 className="text-sm font-semibold">Manutenções</h2>
-          </div>
-          <ul className="divide-y divide-border">
-            {item.maintenanceLog.map((m, i) => (
-              <li key={i} className="px-5 py-3 flex items-start gap-3">
-                <span className={`mt-0.5 w-2 h-2 rounded-full shrink-0 ${m.status === "Resolvido" ? "bg-emerald-400" : "bg-red-400"}`} />
-                <div>
-                  <p className="text-sm">{m.issue}</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">{new Date(m.date).toLocaleDateString("pt-BR")} • {m.reportedBy}</p>
-                  <span className={`text-[10px] font-semibold ${m.status === "Resolvido" ? "text-emerald-600" : "text-red-600"}`}>
-                    {m.status === "Resolvido" ? <CheckCircle2 className="inline w-3 h-3 mr-0.5" /> : <AlertTriangle className="inline w-3 h-3 mr-0.5" />}
-                    {m.status}
-                  </span>
-                </div>
-              </li>
-            ))}
-          </ul>
-        </div>
+        {canWrite && (
+          <EditEquipmentSheet equipment={equipment} categories={categories} />
+        )}
       </div>
+
+      {/* Info card */}
+      <div className="rounded-xl border border-border bg-card p-5">
+        <dl className="grid grid-cols-2 gap-x-6 gap-y-4 text-sm sm:grid-cols-3">
+          {equipment.brand && (
+            <div>
+              <dt className="text-xs text-muted-foreground">Marca</dt>
+              <dd className="mt-0.5 font-medium">{equipment.brand}</dd>
+            </div>
+          )}
+          {equipment.model && (
+            <div>
+              <dt className="text-xs text-muted-foreground">Modelo</dt>
+              <dd className="mt-0.5 font-medium">{equipment.model}</dd>
+            </div>
+          )}
+          {equipment.type === "serialized" && equipment.serial && (
+            <div>
+              <dt className="text-xs text-muted-foreground">Serial</dt>
+              <dd className="mt-0.5 font-mono font-medium">{equipment.serial}</dd>
+            </div>
+          )}
+          {equipment.patrimony && (
+            <div>
+              <dt className="text-xs text-muted-foreground">Patrimônio</dt>
+              <dd className="mt-0.5 font-mono font-medium">{equipment.patrimony}</dd>
+            </div>
+          )}
+          {equipment.purchaseDate && (
+            <div>
+              <dt className="text-xs text-muted-foreground">Aquisição</dt>
+              <dd className="mt-0.5 font-medium">
+                {new Date(equipment.purchaseDate).toLocaleDateString("pt-BR")}
+              </dd>
+            </div>
+          )}
+          {equipment.purchaseValueCents != null && (
+            <div>
+              <dt className="text-xs text-muted-foreground">Valor</dt>
+              <dd className="mt-0.5 font-medium">
+                {formatPurchaseValue(equipment.purchaseValueCents)}
+              </dd>
+            </div>
+          )}
+          {equipment.qrCode && (
+            <div>
+              <dt className="text-xs text-muted-foreground">QR Token</dt>
+              <dd className="mt-0.5 font-mono text-xs">{equipment.qrCode}</dd>
+            </div>
+          )}
+        </dl>
+        {equipment.notes && (
+          <p className="mt-4 border-t border-border pt-4 text-sm text-muted-foreground">
+            {equipment.notes}
+          </p>
+        )}
+      </div>
+
+      {/* Serialized: units table */}
+      {equipment.type === "serialized" && (
+        <div className="overflow-hidden rounded-xl border border-border bg-card">
+          <div className="flex items-center justify-between border-b border-border px-5 py-3.5">
+            <h2 className="text-sm font-semibold">
+              Unidades ({equipment.units.length})
+            </h2>
+            {canWrite && <AddUnitSheet equipmentId={equipment.id} />}
+          </div>
+          {equipment.units.length === 0 ? (
+            <div className="px-5 py-8 text-center text-sm text-muted-foreground">
+              Nenhuma unidade cadastrada.
+            </div>
+          ) : (
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border">
+                  <th className="px-5 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Serial
+                  </th>
+                  <th className="hidden px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground md:table-cell">
+                    Patrimônio
+                  </th>
+                  <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Status
+                  </th>
+                  {canWrite && <th className="w-10 px-4 py-2.5" />}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {equipment.units.map((unit) => (
+                  <tr key={unit.id} className="group">
+                    <td className="px-5 py-3 font-mono text-xs">{unit.serial}</td>
+                    <td className="hidden px-4 py-3 font-mono text-xs text-muted-foreground md:table-cell">
+                      {unit.patrimony ?? "—"}
+                    </td>
+                    <td className="px-4 py-3">
+                      {canWrite ? (
+                        <UnitStatusForm
+                          unitId={unit.id}
+                          equipmentId={equipment.id}
+                          currentStatus={unit.status}
+                        />
+                      ) : (
+                        <StatusBadge status={unit.status} type="item" />
+                      )}
+                    </td>
+                    {canWrite && (
+                      <td className="px-4 py-3">
+                        <DeleteConfirmDialog
+                          action={deleteEquipmentUnit}
+                          itemId={unit.id}
+                          itemName={unit.serial}
+                          itemLabel="unidade"
+                          hiddenFieldName="unitId"
+                          title="Remover unidade"
+                          description="Esta ação remove a unidade permanentemente e não pode ser desfeita."
+                          confirmLabel="Remover"
+                          pendingLabel="Removendo..."
+                          render={
+                            <button
+                              type="button"
+                              className="rounded-md p-1 text-muted-foreground/40 opacity-0 transition-all hover:text-red-600 group-hover:opacity-100"
+                            />
+                          }
+                        >
+                          <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            width="14"
+                            height="14"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            aria-hidden="true"
+                          >
+                            <polyline points="3 6 5 6 21 6" />
+                            <path d="M19 6l-1 14H6L5 6" />
+                            <path d="M10 11v6M14 11v6" />
+                            <path d="M9 6V4h6v2" />
+                          </svg>
+                        </DeleteConfirmDialog>
+                      </td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+
+      {/* Bulk: stock card */}
+      {equipment.type === "bulk" && equipment.bulk && (
+        <div className="rounded-xl border border-border bg-card p-5">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h2 className="text-sm font-semibold">Estoque</h2>
+              <div className="mt-3 flex items-baseline gap-1.5">
+                <span className="text-3xl font-bold tabular-nums">
+                  {equipment.bulk.availableQty}
+                </span>
+                <span className="text-sm text-muted-foreground">
+                  / {equipment.bulk.totalQty} {equipment.bulk.unit} disponíveis
+                </span>
+              </div>
+            </div>
+            {canWrite && <BulkAdjustDialog equipment={equipment} />}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
