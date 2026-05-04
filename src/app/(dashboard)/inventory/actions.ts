@@ -214,3 +214,78 @@ export async function updateEquipment(formData: FormData) {
   revalidatePath("/inventory");
   redirect(`/inventory/${equipmentId}?success=Equipamento atualizado.`);
 }
+
+// ──────────────────────────────────────────────────────────────────
+// addEquipmentUnit
+// Adiciona uma unidade serializada a um equipamento existente.
+// ──────────────────────────────────────────────────────────────────
+export async function addEquipmentUnit(formData: FormData) {
+  await requireWriteRole();
+
+  const equipmentId = String(formData.get("equipmentId") ?? "").trim();
+  const serial = String(formData.get("serial") ?? "").trim();
+  const patrimony = String(formData.get("patrimony") ?? "").trim() || null;
+  const notes = String(formData.get("notes") ?? "").trim() || null;
+
+  if (!equipmentId || !serial) {
+    redirect(`/inventory/${equipmentId}?error=Número de série é obrigatório.`);
+  }
+
+  const supabase = createSupabaseAdminClient();
+
+  const { data: unit, error: insertError } = await supabase
+    .from("equipment_units")
+    .insert({ equipment_id: equipmentId, serial, patrimony, notes, status: "available" })
+    .select("id")
+    .single();
+
+  if (insertError) {
+    redirect(`/inventory/${equipmentId}?error=${encodeURIComponent(insertError.message)}`);
+  }
+
+  const qrCode = generateQrToken("UN", unit.id);
+  await supabase.from("equipment_units").update({ qr_code: qrCode }).eq("id", unit.id);
+
+  revalidatePath(`/inventory/${equipmentId}`);
+  redirect(`/inventory/${equipmentId}?success=Unidade adicionada.`);
+}
+
+// ──────────────────────────────────────────────────────────────────
+// deleteEquipmentUnit
+// Remove uma unidade. Busca equipment_id internamente para o redirect.
+// ──────────────────────────────────────────────────────────────────
+export async function deleteEquipmentUnit(formData: FormData) {
+  await requireWriteRole();
+
+  const unitId = String(formData.get("unitId") ?? "").trim();
+
+  if (!unitId) {
+    redirect("/inventory?error=Unidade inválida.");
+  }
+
+  const supabase = createSupabaseAdminClient();
+
+  const { data: unit, error: fetchError } = await supabase
+    .from("equipment_units")
+    .select("equipment_id")
+    .eq("id", unitId)
+    .single();
+
+  if (fetchError || !unit) {
+    redirect("/inventory?error=Unidade não encontrada.");
+  }
+
+  const equipmentId = unit.equipment_id;
+
+  const { error } = await supabase
+    .from("equipment_units")
+    .delete()
+    .eq("id", unitId);
+
+  if (error) {
+    redirect(`/inventory/${equipmentId}?error=${encodeURIComponent(error.message)}`);
+  }
+
+  revalidatePath(`/inventory/${equipmentId}`);
+  redirect(`/inventory/${equipmentId}?success=Unidade removida.`);
+}

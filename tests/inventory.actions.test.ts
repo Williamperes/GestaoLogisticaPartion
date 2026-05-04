@@ -28,6 +28,8 @@ import {
   deactivateEquipment,
   updateEquipmentUnitStatus,
   updateEquipment,
+  addEquipmentUnit,
+  deleteEquipmentUnit,
 } from "@/app/(dashboard)/inventory/actions";
 
 function buildFormData(values: Record<string, string>) {
@@ -262,6 +264,96 @@ describe("inventory actions", () => {
       await expect(
         updateEquipment(buildFormData({ equipmentId: "equip-1", name: "  " }))
       ).rejects.toThrow("NEXT_REDIRECT:/inventory/equip-1?error=");
+    });
+  });
+
+  // ── addEquipmentUnit ──────────────────────────────────────────────
+
+  describe("addEquipmentUnit", () => {
+    it("inserts unit, generates QR code, and redirects with success", async () => {
+      const updateResult = vi.fn().mockResolvedValue({ error: null });
+      const updateEqFn = vi.fn().mockReturnValue(updateResult);
+      const updateFn = vi.fn().mockReturnValue({ eq: updateEqFn });
+
+      const insertSingle = vi.fn().mockResolvedValue({ data: { id: "unit-new" }, error: null });
+      const insertSelectFn = vi.fn().mockReturnValue({ single: insertSingle });
+      const insertFn = vi.fn().mockReturnValue({ select: insertSelectFn });
+
+      mocks.createSupabaseAdminClient.mockReturnValue({
+        from: vi.fn((table: string) => {
+          if (table === "equipment_units") return { insert: insertFn, update: updateFn };
+          return {};
+        }),
+      });
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+
+      await expect(
+        addEquipmentUnit(
+          buildFormData({
+            equipmentId: "equip-1",
+            serial: "PM7-0002",
+            patrimony: "PAT-002",
+            notes: "",
+          })
+        )
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory/equip-1?success=Unidade adicionada.");
+
+      expect(insertFn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          equipment_id: "equip-1",
+          serial: "PM7-0002",
+          patrimony: "PAT-002",
+          status: "available",
+        })
+      );
+      expect(mocks.generateQrToken).toHaveBeenCalledWith("UN", "unit-new");
+      expect(mocks.revalidatePath).toHaveBeenCalledWith("/inventory/equip-1");
+    });
+
+    it("rejects when serial is empty", async () => {
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+      await expect(
+        addEquipmentUnit(buildFormData({ equipmentId: "equip-1", serial: "" }))
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory/equip-1?error=Número de série é obrigatório.");
+    });
+  });
+
+  // ── deleteEquipmentUnit ───────────────────────────────────────────
+
+  describe("deleteEquipmentUnit", () => {
+    it("fetches equipment_id, deletes unit, revalidates, and redirects", async () => {
+      const deleteResult = vi.fn().mockResolvedValue({ error: null });
+      const deleteEqFn = vi.fn().mockReturnValue(deleteResult);
+      const deleteFn = vi.fn().mockReturnValue({ eq: deleteEqFn });
+
+      const fetchSingle = vi.fn().mockResolvedValue({
+        data: { equipment_id: "equip-1" },
+        error: null,
+      });
+      const fetchEqFn = vi.fn().mockReturnValue({ single: fetchSingle });
+      const fetchSelectFn = vi.fn().mockReturnValue({ eq: fetchEqFn });
+
+      mocks.createSupabaseAdminClient.mockReturnValue({
+        from: vi.fn().mockReturnValue({
+          select: fetchSelectFn,
+          delete: deleteFn,
+        }),
+      });
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+
+      await expect(
+        deleteEquipmentUnit(buildFormData({ unitId: "unit-1" }))
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory/equip-1?success=Unidade removida.");
+
+      expect(deleteEqFn).toHaveBeenCalledWith("id", "unit-1");
+      expect(mocks.revalidatePath).toHaveBeenCalledWith("/inventory/equip-1");
+    });
+
+    it("rejects when unitId is missing", async () => {
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+      await expect(
+        deleteEquipmentUnit(buildFormData({ unitId: "" }))
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory?error=");
     });
   });
 });
