@@ -2,7 +2,7 @@
 // PARTION — Mock Data (visual-only phase)
 // ──────────────────────────────────────────────────────────────────
 
-export type EventStatus = "planning" | "gate_open" | "in_field" | "completed" | "cancelled";
+export type EventStatus = "planning" | "ready_to_load" | "in_field" | "completed" | "cancelled";
 export type ItemStatus = "available" | "reserved" | "maintenance" | "inactive";
 export type Specialty = "sound" | "light" | "image";
 
@@ -16,7 +16,7 @@ export const mockEvents = [
     city: "São Paulo",
     startDate: "2025-04-12",
     endDate: "2025-04-14",
-    status: "gate_open" as EventStatus,
+    status: "ready_to_load" as EventStatus,
     gateProgress: 100,
     teamCount: 8,
     equipmentPlanned: 42,
