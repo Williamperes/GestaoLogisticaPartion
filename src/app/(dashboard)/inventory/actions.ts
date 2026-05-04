@@ -289,3 +289,37 @@ export async function deleteEquipmentUnit(formData: FormData) {
   revalidatePath(`/inventory/${equipmentId}`);
   redirect(`/inventory/${equipmentId}?success=Unidade removida.`);
 }
+
+// ──────────────────────────────────────────────────────────────────
+// updateBulkInventory
+// Ajusta totalQty e availableQty do estoque em lote.
+// ──────────────────────────────────────────────────────────────────
+export async function updateBulkInventory(formData: FormData) {
+  await requireWriteRole();
+
+  const equipmentId = String(formData.get("equipmentId") ?? "").trim();
+  const totalQty = parseInt(String(formData.get("totalQty") ?? ""), 10);
+  const availableQty = parseInt(String(formData.get("availableQty") ?? ""), 10);
+
+  if (
+    !equipmentId ||
+    isNaN(totalQty) ||
+    isNaN(availableQty) ||
+    totalQty < 0 ||
+    availableQty < 0 ||
+    availableQty > totalQty
+  ) {
+    redirect(`/inventory/${equipmentId}?error=Quantidades inválidas.`);
+  }
+
+  const supabase = createSupabaseAdminClient();
+  const { error } = await supabase
+    .from("bulk_inventory")
+    .update({ total_qty: totalQty, available_qty: availableQty })
+    .eq("equipment_id", equipmentId);
+
+  if (error) redirect(`/inventory/${equipmentId}?error=${encodeURIComponent(error.message)}`);
+
+  revalidatePath(`/inventory/${equipmentId}`);
+  redirect(`/inventory/${equipmentId}?success=Estoque atualizado.`);
+}

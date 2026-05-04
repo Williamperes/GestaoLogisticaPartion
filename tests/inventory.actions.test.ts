@@ -30,6 +30,7 @@ import {
   updateEquipment,
   addEquipmentUnit,
   deleteEquipmentUnit,
+  updateBulkInventory,
 } from "@/app/(dashboard)/inventory/actions";
 
 function buildFormData(values: Record<string, string>) {
@@ -354,6 +355,49 @@ describe("inventory actions", () => {
       await expect(
         deleteEquipmentUnit(buildFormData({ unitId: "" }))
       ).rejects.toThrow("NEXT_REDIRECT:/inventory?error=");
+    });
+  });
+
+  // ── updateBulkInventory ───────────────────────────────────────────
+
+  describe("updateBulkInventory", () => {
+    it("updates total and available qty and redirects with success", async () => {
+      const updateResult = vi.fn().mockResolvedValue({ error: null });
+      const eqFn = vi.fn().mockReturnValue(updateResult);
+      const updateFn = vi.fn().mockReturnValue({ eq: eqFn });
+
+      mocks.createSupabaseAdminClient.mockReturnValue({
+        from: vi.fn().mockReturnValue({ update: updateFn }),
+      });
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+
+      await expect(
+        updateBulkInventory(
+          buildFormData({ equipmentId: "equip-1", totalQty: "200", availableQty: "150" })
+        )
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory/equip-1?success=Estoque atualizado.");
+
+      expect(updateFn).toHaveBeenCalledWith({ total_qty: 200, available_qty: 150 });
+      expect(eqFn).toHaveBeenCalledWith("equipment_id", "equip-1");
+      expect(mocks.revalidatePath).toHaveBeenCalledWith("/inventory/equip-1");
+    });
+
+    it("rejects when availableQty exceeds totalQty", async () => {
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+      await expect(
+        updateBulkInventory(
+          buildFormData({ equipmentId: "equip-1", totalQty: "100", availableQty: "200" })
+        )
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory/equip-1?error=Quantidades inválidas.");
+    });
+
+    it("rejects when qty values are NaN", async () => {
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+      await expect(
+        updateBulkInventory(
+          buildFormData({ equipmentId: "equip-1", totalQty: "abc", availableQty: "0" })
+        )
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory/equip-1?error=Quantidades inválidas.");
     });
   });
 });
