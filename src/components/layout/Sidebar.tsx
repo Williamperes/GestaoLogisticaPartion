@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils";
 import {
   LayoutDashboard,
   CalendarDays,
+  Package,
   Users,
   UserRound,
   LogOut,
@@ -30,6 +31,7 @@ const navGroups = [
     items: [
       { href: "/dashboard", icon: LayoutDashboard, label: "Dashboard" },
       { href: "/events", icon: CalendarDays, label: "Eventos & OS", badge: 3 },
+      { href: "/inventory", icon: Package, label: "Inventário" },
     ],
   },
   {

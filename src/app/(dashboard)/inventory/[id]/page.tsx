@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { ChevronRight, Package, Layers } from "lucide-react";
+import { ChevronRight, Package } from "lucide-react";
 
 import { getCurrentUserContext } from "@/lib/auth/session";
 import {
@@ -15,7 +15,6 @@ import { deleteEquipmentUnit } from "@/app/(dashboard)/inventory/actions";
 import { EditEquipmentSheet } from "@/app/(dashboard)/inventory/[id]/EditEquipmentSheet";
 import { AddUnitSheet } from "@/app/(dashboard)/inventory/[id]/AddUnitSheet";
 import { UnitStatusForm } from "@/app/(dashboard)/inventory/[id]/UnitStatusForm";
-import { BulkAdjustDialog } from "@/app/(dashboard)/inventory/[id]/BulkAdjustDialog";
 
 interface Props {
   params: Promise<{ id: string }>;
@@ -65,11 +64,8 @@ export default async function InventoryDetailPage({ params, searchParams }: Prop
       {/* Header */}
       <div className="flex items-start justify-between gap-4">
         <div className="flex items-center gap-3">
-          {equipment.type === "bulk" ? (
-            <Layers className="h-7 w-7 text-amber-600" />
-          ) : (
-            <Package className="h-7 w-7 text-amber-600" />
-          )}
+          <Package className="h-7 w-7 text-amber-600" />
+
           <div>
             <h1 className="text-2xl font-bold">{equipment.name}</h1>
             <p className="text-sm text-muted-foreground">
@@ -234,25 +230,6 @@ export default async function InventoryDetailPage({ params, searchParams }: Prop
         </div>
       )}
 
-      {/* Bulk: stock card */}
-      {equipment.type === "bulk" && equipment.bulk && (
-        <div className="rounded-xl border border-border bg-card p-5">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <h2 className="text-sm font-semibold">Estoque</h2>
-              <div className="mt-3 flex items-baseline gap-1.5">
-                <span className="text-3xl font-bold tabular-nums">
-                  {equipment.bulk.availableQty}
-                </span>
-                <span className="text-sm text-muted-foreground">
-                  / {equipment.bulk.totalQty} {equipment.bulk.unit} disponíveis
-                </span>
-              </div>
-            </div>
-            {canWrite && <BulkAdjustDialog equipment={equipment} />}
-          </div>
-        </div>
-      )}
     </div>
   );
 }

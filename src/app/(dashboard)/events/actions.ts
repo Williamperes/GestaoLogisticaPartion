@@ -222,3 +222,33 @@ export async function addEquipmentToEvent(formData: FormData) {
 
   revalidatePath(`/events/${eventId}`);
 }
+
+// ──────────────────────────────────────────────────────────────────
+// removeEquipmentFromEvent
+// Remove um equipamento vinculado a um evento.
+// ──────────────────────────────────────────────────────────────────
+export async function removeEquipmentFromEvent(formData: FormData) {
+  await requireWriteRole();
+
+  const eventEquipmentId = String(formData.get("eventEquipmentId") ?? "").trim();
+  if (!eventEquipmentId) redirect("/events?error=Dados inválidos.");
+
+  const supabase = createSupabaseAdminClient();
+
+  const { data: row } = await supabase
+    .from("event_equipment")
+    .select("event_id")
+    .eq("id", eventEquipmentId)
+    .maybeSingle();
+
+  const eventId = row?.event_id ?? "";
+
+  const { error } = await supabase
+    .from("event_equipment")
+    .delete()
+    .eq("id", eventEquipmentId);
+
+  if (error) redirect(`/events/${eventId}?error=${encodeURIComponent(error.message)}`);
+
+  revalidatePath(`/events/${eventId}`);
+}

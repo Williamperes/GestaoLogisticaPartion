@@ -1,4 +1,4 @@
-import { Search, Package, Layers } from "lucide-react";
+import { Search, Package } from "lucide-react";
 import Link from "next/link";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { InventorySheet } from "@/app/(dashboard)/inventory/InventorySheet";
@@ -6,12 +6,11 @@ import { getCurrentUserContext } from "@/lib/auth/session";
 import { listEquipment, listEquipmentCategories } from "@/lib/inventory";
 
 interface InventoryPageProps {
-  searchParams: Promise<{ q?: string; view?: string }>;
+  searchParams: Promise<{ q?: string }>;
 }
 
 export default async function InventoryPage({ searchParams }: InventoryPageProps) {
-  const { q, view } = await searchParams;
-  const currentView = view === "bulk" ? "bulk" : "serialized";
+  const { q } = await searchParams;
   const search = q?.trim() ?? "";
 
   const context = await getCurrentUserContext();
@@ -24,9 +23,7 @@ export default async function InventoryPage({ searchParams }: InventoryPageProps
       ])
     : [[], []];
 
-  const filtered = items.filter((i) =>
-    currentView === "bulk" ? i.type === "bulk" : i.type === "serialized"
-  );
+  const filtered = items.filter((i) => i.type === "serialized");
 
   const canWrite = ["super_admin", "admin", "operations", "warehouse"].includes(context?.role ?? "");
 
@@ -53,33 +50,7 @@ export default async function InventoryPage({ searchParams }: InventoryPageProps
         )}
       </div>
 
-      {/* Toggle + Search */}
       <div className="flex flex-wrap items-center gap-3">
-        <div className="flex items-center gap-1 rounded-lg border border-border bg-card p-1">
-          <Link
-            href={`/inventory?view=serialized${search ? `&q=${encodeURIComponent(search)}` : ""}`}
-            className={`flex items-center gap-2 rounded-md px-3 py-1.5 text-xs font-medium transition-all ${
-              currentView === "serialized"
-                ? "bg-amber-500/15 text-amber-600"
-                : "text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            <Package className="h-3.5 w-3.5" />
-            Serializados
-          </Link>
-          <Link
-            href={`/inventory?view=bulk${search ? `&q=${encodeURIComponent(search)}` : ""}`}
-            className={`flex items-center gap-2 rounded-md px-3 py-1.5 text-xs font-medium transition-all ${
-              currentView === "bulk"
-                ? "bg-amber-500/15 text-amber-600"
-                : "text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            <Layers className="h-3.5 w-3.5" />
-            Em Lote
-          </Link>
-        </div>
-
         <form className="ml-auto flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm text-muted-foreground">
           <Search className="h-3.5 w-3.5" />
           <input
@@ -88,7 +59,6 @@ export default async function InventoryPage({ searchParams }: InventoryPageProps
             placeholder="Buscar item..."
             className="w-36 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
           />
-          <input type="hidden" name="view" value={currentView} />
         </form>
       </div>
 
@@ -99,9 +69,7 @@ export default async function InventoryPage({ searchParams }: InventoryPageProps
           <p className="text-sm font-medium text-muted-foreground">
             {search
               ? `Nenhum item encontrado para "${search}"`
-              : currentView === "bulk"
-              ? "Nenhum item em lote cadastrado"
-              : "Nenhum item serializado cadastrado"}
+              : "Nenhum item cadastrado"}
           </p>
           {canWrite && !search && (
             <p className="mt-1 text-xs text-muted-foreground/60">
@@ -118,11 +86,7 @@ export default async function InventoryPage({ searchParams }: InventoryPageProps
               className="group rounded-xl border border-border bg-card p-4 transition-all hover:border-amber-500/40 hover:bg-black/2"
             >
               <div className="mb-3 flex h-24 w-full items-center justify-center rounded-lg bg-black/4 transition-colors group-hover:bg-black/6">
-                {item.type === "bulk" ? (
-                  <Layers className="h-8 w-8 text-muted-foreground/40" />
-                ) : (
-                  <Package className="h-8 w-8 text-muted-foreground/40" />
-                )}
+                <Package className="h-8 w-8 text-muted-foreground/40" />
               </div>
 
               <div className="flex items-start justify-between gap-2">
@@ -136,15 +100,9 @@ export default async function InventoryPage({ searchParams }: InventoryPageProps
 
               <div className="mt-3 flex items-center justify-between">
                 <StatusBadge status={item.status} type="item" />
-                {item.type === "bulk" && item.bulk ? (
-                  <span className="font-mono text-[10px] text-muted-foreground">
-                    {item.bulk.availableQty}/{item.bulk.totalQty} {item.bulk.unit}
-                  </span>
-                ) : (
-                  <span className="max-w-[90px] truncate font-mono text-[10px] text-muted-foreground">
-                    {item.serial ?? "—"}
-                  </span>
-                )}
+                <span className="max-w-[90px] truncate font-mono text-[10px] text-muted-foreground">
+                  {item.serial ?? "—"}
+                </span>
               </div>
             </Link>
           ))}

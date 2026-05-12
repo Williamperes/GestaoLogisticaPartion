@@ -23,6 +23,7 @@ export interface EventEquipmentItem {
   equipmentName: string;
   unitId: string | null;
   unitSerial: string | null;
+  unitStatus: string | null;
   qty: number;
   confirmed: boolean;
   notes: string | null;
@@ -131,7 +132,7 @@ export async function getEventById(id: string): Promise<EventDetail | null> {
       event_equipment (
         id, event_id, equipment_id, unit_id, qty, confirmed, notes,
         equipment (id, name),
-        equipment_units (id, serial)
+        equipment_units (id, serial, status)
       )
     `)
     .eq("id", id)
@@ -152,7 +153,7 @@ export async function getEventById(id: string): Promise<EventDetail | null> {
       id: string; event_id: string; equipment_id: string; unit_id: string | null;
       qty: number; confirmed: boolean; notes: string | null;
       equipment: { id: string; name: string };
-      equipment_units: { id: string; serial: string } | null;
+      equipment_units: { id: string; serial: string; status: string } | null;
     }[]
   ) ?? [];
 
@@ -191,6 +192,7 @@ export async function getEventById(id: string): Promise<EventDetail | null> {
       equipmentName: e.equipment.name,
       unitId: e.unit_id,
       unitSerial: e.equipment_units?.serial ?? null,
+      unitStatus: e.equipment_units?.status ?? null,
       qty: e.qty,
       confirmed: e.confirmed,
       notes: e.notes,
