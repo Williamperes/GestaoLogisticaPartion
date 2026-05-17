@@ -405,7 +405,14 @@ export default async function EventDetailPage({ params, searchParams }: EventDet
                       <tbody className="divide-y divide-border">
                         {event.equipment.map((eq) => (
                           <tr key={eq.id} className="group transition-colors hover:bg-black/2">
-                            <td className="px-5 py-3.5 font-medium">{eq.equipmentName}</td>
+                            <td className="px-5 py-3.5 font-medium">
+                              {eq.equipmentName}
+                              {eq.variantLabel && (
+                                <span className="ml-2 rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700">
+                                  {eq.variantLabel}
+                                </span>
+                              )}
+                            </td>
                             <td className="hidden px-4 py-3.5 font-mono text-xs text-muted-foreground md:table-cell">
                               {eq.unitSerial ?? `${eq.qty} un`}
                             </td>
@@ -528,20 +535,38 @@ export default async function EventDetailPage({ params, searchParams }: EventDet
                       eventStatus={event.status}
                       equipment={allEquipment.map((e) => {
                         const av = availabilityMap.get(e.id);
+                        const variantsMapped =
+                          e.hasVariants && e.variants
+                            ? e.variants.map((v) => {
+                                const va = availabilityMap.get(`${e.id}:${v.id}`);
+                                return {
+                                  id: v.id,
+                                  label: v.label,
+                                  total: va?.total ?? 0,
+                                  allocatedByOthers: va?.allocated ?? 0,
+                                  available: va?.available ?? 0,
+                                };
+                              })
+                            : undefined;
                         return {
                           id: e.id,
                           name: e.name,
                           type: e.type,
                           categoryName: e.categoryName,
+                          hasVariants: e.hasVariants,
                           total: av?.total ?? 0,
                           allocatedByOthers: av?.allocated ?? 0,
                           available: av?.available ?? 0,
+                          variants: variantsMapped,
                         };
                       })}
-                      currentQtyByEquipment={event.equipment.reduce<Record<string, number>>(
+                      currentQtyByKey={event.equipment.reduce<Record<string, number>>(
                         (acc, item) => {
                           if (item.unitId !== null) return acc;
-                          acc[item.equipmentId] = (acc[item.equipmentId] ?? 0) + item.qty;
+                          const key = item.variantId
+                            ? `${item.equipmentId}__${item.variantId}`
+                            : item.equipmentId;
+                          acc[key] = (acc[key] ?? 0) + item.qty;
                           return acc;
                         },
                         {}

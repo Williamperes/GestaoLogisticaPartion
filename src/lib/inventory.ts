@@ -12,12 +12,27 @@ export interface EquipmentCategory {
   id: string;
   organizationId: string;
   name: string;
+  parentCategoryId: string | null;
+  parentCategoryName: string | null;
   equipmentCount: number;
+}
+
+export interface EquipmentVariant {
+  id: string;
+  equipmentId: string;
+  label: string;
+  sortValue: number | null;
+  position: number;
+  notes: string | null;
+  /** Estoque associado à variante. Para bulk: total_qty; para serializado: count de units. */
+  totalQty?: number;
+  availableQty?: number;
 }
 
 export interface EquipmentUnit {
   id: string;
   equipmentId: string;
+  variantId: string | null;
   serial: string;
   patrimony: string | null;
   status: EquipmentStatus;
@@ -29,6 +44,7 @@ export interface EquipmentUnit {
 export interface BulkInventory {
   id: string;
   equipmentId: string;
+  variantId: string | null;
   unit: string;
   totalQty: number;
   availableQty: number;
@@ -39,11 +55,14 @@ export interface Equipment {
   organizationId: string;
   categoryId: string | null;
   categoryName: string | null;
+  parentCategoryId: string | null;
+  parentCategoryName: string | null;
   name: string;
   brand: string | null;
   model: string | null;
   type: EquipmentType;
   status: EquipmentStatus;
+  hasVariants: boolean;
   serial: string | null;
   patrimony: string | null;
   purchaseDate: string | null;
@@ -51,15 +70,27 @@ export interface Equipment {
   qrCode: string | null;
   notes: string | null;
   createdAt: string;
-  // Populated for bulk
+  // Populated for bulk (when no variants)
   bulk?: BulkInventory;
-  // Populated for serialized (summary)
+  // Populated for serialized summary
   unitCount?: number;
   availableUnitCount?: number;
+  // Populated when has_variants = true
+  variants?: EquipmentVariant[];
 }
 
 export interface EquipmentWithUnits extends Equipment {
   units: EquipmentUnit[];
+}
+
+// Identificador composto usado nos Maps de disponibilidade: equipment + variant.
+// Sem variante → chave é só o equipmentId. Mantém compatibilidade com itens
+// que ainda não usam variantes.
+export function availabilityKey(
+  equipmentId: string,
+  variantId: string | null | undefined
+): string {
+  return variantId ? `${equipmentId}:${variantId}` : equipmentId;
 }
 
 // ──────────────────────────────────────────────────────────────────
@@ -70,20 +101,31 @@ export async function listEquipmentCategories(organizationId: string) {
   const supabase = createSupabaseAdminClient();
   const { data, error } = await supabase
     .from("equipment_categories")
-    .select("id, organization_id, name, equipment(count)")
+    .select(
+      `
+      id, organization_id, name, parent_category_id,
+      parent:parent_category_id (id, name),
+      equipment(count)
+    `
+    )
     .eq("organization_id", organizationId)
     .order("name", { ascending: true });
 
   if (error) throw error;
 
   return (
-    data?.map((c) => ({
-      id: c.id,
-      organizationId: c.organization_id,
-      name: c.name,
-      equipmentCount:
-        (c.equipment as unknown as { count: number }[] | null)?.[0]?.count ?? 0,
-    })) ?? []
+    data?.map((c) => {
+      const parent = c.parent as unknown as { id: string; name: string } | null;
+      return {
+        id: c.id,
+        organizationId: c.organization_id,
+        name: c.name,
+        parentCategoryId: c.parent_category_id,
+        parentCategoryName: parent?.name ?? null,
+        equipmentCount:
+          (c.equipment as unknown as { count: number }[] | null)?.[0]?.count ?? 0,
+      };
+    }) ?? []
   ) satisfies EquipmentCategory[];
 }
 
@@ -93,11 +135,15 @@ export async function listEquipment(organizationId: string, search?: string): Pr
   let query = supabase
     .from("equipment")
     .select(`
-      id, organization_id, category_id, name, brand, model, type, status,
+      id, organization_id, category_id, name, brand, model, type, status, has_variants,
       serial, patrimony, purchase_date, purchase_value_cents, qr_code, notes, created_at,
-      equipment_categories (id, name),
-      bulk_inventory (id, unit, total_qty, available_qty),
-      equipment_units (id, status)
+      equipment_categories (
+        id, name, parent_category_id,
+        parent:parent_category_id (id, name)
+      ),
+      bulk_inventory (id, variant_id, unit, total_qty, available_qty),
+      equipment_units (id, variant_id, status),
+      equipment_variants (id, label, sort_value, position, notes)
     `)
     .eq("organization_id", organizationId)
     .order("created_at", { ascending: false });
@@ -112,20 +158,75 @@ export async function listEquipment(organizationId: string, search?: string): Pr
 
   return (
     data?.map((row) => {
-      const cat = row.equipment_categories as unknown as { id: string; name: string } | null;
-      const bulk = (row.bulk_inventory as unknown as { id: string; unit: string; total_qty: number; available_qty: number }[] | null)?.[0] ?? null;
-      const units = (row.equipment_units as unknown as { id: string; status: string }[]) ?? [];
+      const cat = row.equipment_categories as unknown as {
+        id: string;
+        name: string;
+        parent_category_id: string | null;
+        parent: { id: string; name: string } | null;
+      } | null;
+      const bulkRows =
+        (row.bulk_inventory as unknown as {
+          id: string;
+          variant_id: string | null;
+          unit: string;
+          total_qty: number;
+          available_qty: number;
+        }[] | null) ?? [];
+      const bulkNoVariant = bulkRows.find((b) => b.variant_id === null) ?? null;
+      const units =
+        (row.equipment_units as unknown as {
+          id: string;
+          variant_id: string | null;
+          status: string;
+        }[]) ?? [];
+      const variantRows =
+        (row.equipment_variants as unknown as {
+          id: string;
+          label: string;
+          sort_value: number | null;
+          position: number;
+          notes: string | null;
+        }[]) ?? [];
+
+      const variants: EquipmentVariant[] = variantRows
+        .slice()
+        .sort((a, b) => {
+          if (a.position !== b.position) return a.position - b.position;
+          if (a.sort_value !== null && b.sort_value !== null && a.sort_value !== b.sort_value) {
+            return a.sort_value - b.sort_value;
+          }
+          return a.label.localeCompare(b.label);
+        })
+        .map((v) => {
+          const bulkForVariant = bulkRows.find((b) => b.variant_id === v.id);
+          const unitsForVariant = units.filter((u) => u.variant_id === v.id);
+          return {
+            id: v.id,
+            equipmentId: row.id,
+            label: v.label,
+            sortValue: v.sort_value,
+            position: v.position,
+            notes: v.notes,
+            totalQty: bulkForVariant?.total_qty ?? unitsForVariant.length,
+            availableQty:
+              bulkForVariant?.available_qty ??
+              unitsForVariant.filter((u) => u.status === "available").length,
+          };
+        });
 
       return {
         id: row.id,
         organizationId: row.organization_id,
         categoryId: row.category_id,
         categoryName: cat?.name ?? null,
+        parentCategoryId: cat?.parent_category_id ?? null,
+        parentCategoryName: cat?.parent?.name ?? null,
         name: row.name,
         brand: row.brand,
         model: row.model,
         type: row.type as EquipmentType,
         status: row.status as EquipmentStatus,
+        hasVariants: row.has_variants,
         serial: row.serial,
         patrimony: row.patrimony,
         purchaseDate: row.purchase_date,
@@ -133,17 +234,19 @@ export async function listEquipment(organizationId: string, search?: string): Pr
         qrCode: row.qr_code,
         notes: row.notes,
         createdAt: row.created_at,
-        bulk: bulk
+        bulk: bulkNoVariant
           ? {
-              id: bulk.id,
+              id: bulkNoVariant.id,
               equipmentId: row.id,
-              unit: bulk.unit,
-              totalQty: bulk.total_qty,
-              availableQty: bulk.available_qty,
+              variantId: null,
+              unit: bulkNoVariant.unit,
+              totalQty: bulkNoVariant.total_qty,
+              availableQty: bulkNoVariant.available_qty,
             }
           : undefined,
         unitCount: units.length,
         availableUnitCount: units.filter((u) => u.status === "available").length,
+        variants: row.has_variants ? variants : undefined,
       };
     }) ?? []
   ) satisfies Equipment[];
@@ -155,11 +258,15 @@ export async function getEquipmentById(id: string): Promise<EquipmentWithUnits |
   const { data, error } = await supabase
     .from("equipment")
     .select(`
-      id, organization_id, category_id, name, brand, model, type, status,
+      id, organization_id, category_id, name, brand, model, type, status, has_variants,
       serial, patrimony, purchase_date, purchase_value_cents, qr_code, notes, created_at,
-      equipment_categories (id, name),
-      bulk_inventory (id, unit, total_qty, available_qty),
-      equipment_units (id, serial, patrimony, status, qr_code, notes, created_at)
+      equipment_categories (
+        id, name, parent_category_id,
+        parent:parent_category_id (id, name)
+      ),
+      bulk_inventory (id, variant_id, unit, total_qty, available_qty),
+      equipment_units (id, variant_id, serial, patrimony, status, qr_code, notes, created_at),
+      equipment_variants (id, label, sort_value, position, notes)
     `)
     .eq("id", id)
     .maybeSingle();
@@ -167,20 +274,80 @@ export async function getEquipmentById(id: string): Promise<EquipmentWithUnits |
   if (error) throw error;
   if (!data) return null;
 
-  const cat = data.equipment_categories as unknown as { id: string; name: string } | null;
-  const bulk = (data.bulk_inventory as unknown as { id: string; unit: string; total_qty: number; available_qty: number }[] | null)?.[0] ?? null;
-  const units = (data.equipment_units as unknown as { id: string; serial: string; patrimony: string | null; status: string; qr_code: string | null; notes: string | null; created_at: string }[]) ?? [];
+  const cat = data.equipment_categories as unknown as {
+    id: string;
+    name: string;
+    parent_category_id: string | null;
+    parent: { id: string; name: string } | null;
+  } | null;
+  const bulkRows =
+    (data.bulk_inventory as unknown as {
+      id: string;
+      variant_id: string | null;
+      unit: string;
+      total_qty: number;
+      available_qty: number;
+    }[] | null) ?? [];
+  const bulkNoVariant = bulkRows.find((b) => b.variant_id === null) ?? null;
+  const units =
+    (data.equipment_units as unknown as {
+      id: string;
+      variant_id: string | null;
+      serial: string;
+      patrimony: string | null;
+      status: string;
+      qr_code: string | null;
+      notes: string | null;
+      created_at: string;
+    }[]) ?? [];
+  const variantRows =
+    (data.equipment_variants as unknown as {
+      id: string;
+      label: string;
+      sort_value: number | null;
+      position: number;
+      notes: string | null;
+    }[]) ?? [];
+
+  const variants: EquipmentVariant[] = variantRows
+    .slice()
+    .sort((a, b) => {
+      if (a.position !== b.position) return a.position - b.position;
+      if (a.sort_value !== null && b.sort_value !== null && a.sort_value !== b.sort_value) {
+        return a.sort_value - b.sort_value;
+      }
+      return a.label.localeCompare(b.label);
+    })
+    .map((v) => {
+      const bulkForVariant = bulkRows.find((b) => b.variant_id === v.id);
+      const unitsForVariant = units.filter((u) => u.variant_id === v.id);
+      return {
+        id: v.id,
+        equipmentId: data.id,
+        label: v.label,
+        sortValue: v.sort_value,
+        position: v.position,
+        notes: v.notes,
+        totalQty: bulkForVariant?.total_qty ?? unitsForVariant.length,
+        availableQty:
+          bulkForVariant?.available_qty ??
+          unitsForVariant.filter((u) => u.status === "available").length,
+      };
+    });
 
   return {
     id: data.id,
     organizationId: data.organization_id,
     categoryId: data.category_id,
     categoryName: cat?.name ?? null,
+    parentCategoryId: cat?.parent_category_id ?? null,
+    parentCategoryName: cat?.parent?.name ?? null,
     name: data.name,
     brand: data.brand,
     model: data.model,
     type: data.type as EquipmentType,
     status: data.status as EquipmentStatus,
+    hasVariants: data.has_variants,
     serial: data.serial,
     patrimony: data.patrimony,
     purchaseDate: data.purchase_date,
@@ -188,20 +355,23 @@ export async function getEquipmentById(id: string): Promise<EquipmentWithUnits |
     qrCode: data.qr_code,
     notes: data.notes,
     createdAt: data.created_at,
-    bulk: bulk
+    bulk: bulkNoVariant
       ? {
-          id: bulk.id,
+          id: bulkNoVariant.id,
           equipmentId: data.id,
-          unit: bulk.unit,
-          totalQty: bulk.total_qty,
-          availableQty: bulk.available_qty,
+          variantId: null,
+          unit: bulkNoVariant.unit,
+          totalQty: bulkNoVariant.total_qty,
+          availableQty: bulkNoVariant.available_qty,
         }
       : undefined,
     unitCount: units.length,
     availableUnitCount: units.filter((u) => u.status === "available").length,
+    variants: data.has_variants ? variants : undefined,
     units: units.map((u) => ({
       id: u.id,
       equipmentId: data.id,
+      variantId: u.variant_id,
       serial: u.serial,
       patrimony: u.patrimony,
       status: u.status as EquipmentStatus,
@@ -223,8 +393,12 @@ export interface EquipmentAvailability {
 }
 
 /**
- * Calcula disponibilidade efetiva de cada equipamento da organização para um
- * período. Considera "ocupando estoque" eventos com status
+ * Calcula disponibilidade efetiva PER (equipment, variant) para um período.
+ * O Map é chaveado por `availabilityKey(equipmentId, variantId)`:
+ *   - sem variante → chave é só o equipmentId
+ *   - com variante → "<equipmentId>:<variantId>"
+ *
+ * Considera "ocupando estoque" eventos com status
  *   planning ∪ ready_to_load ∪ in_field
  * cujas datas se sobrepõem ao intervalo [startDate, endDate].
  *
@@ -241,27 +415,30 @@ export async function getEquipmentAvailability(
 ): Promise<Map<string, EquipmentAvailability>> {
   const supabase = createSupabaseAdminClient();
 
-  // 1) Capacidade total por equipamento.
-  //    - serializado: count(equipment_units) com status NOT IN ('maintenance', 'inactive')
-  //    - bulk:        bulk_inventory.total_qty
+  // 1) Capacidade total por (equipment, variant).
+  //    - serializado sem variantes: count(equipment_units) por equipment.
+  //    - serializado com variantes: count por (equipment_id, variant_id).
+  //    - bulk sem variantes: bulk_inventory.total_qty (variant_id IS NULL).
+  //    - bulk com variantes: uma row por variante.
   const { data: equipRows, error: equipErr } = await supabase
     .from("equipment")
     .select(
       `
-      id, type,
-      equipment_units (id, status),
-      bulk_inventory (total_qty)
+      id, type, has_variants,
+      equipment_units (id, variant_id, status),
+      bulk_inventory (variant_id, total_qty),
+      equipment_variants (id)
     `
     )
     .eq("organization_id", organizationId);
   if (equipErr) throw equipErr;
 
-  // 2) Alocação somada em OS sobrepostas (excluindo a OS atual, se informada).
+  // 2) Alocação por (equipment_id, variant_id) em OS sobrepostas.
   let allocQuery = supabase
     .from("event_equipment")
     .select(
       `
-      equipment_id, qty,
+      equipment_id, variant_id, qty,
       events!inner (id, organization_id, status, start_date, end_date)
     `
     )
@@ -279,31 +456,44 @@ export async function getEquipmentAvailability(
 
   const allocMap = new Map<string, number>();
   for (const row of allocData ?? []) {
-    const prev = allocMap.get(row.equipment_id) ?? 0;
-    allocMap.set(row.equipment_id, prev + (row.qty ?? 0));
+    const key = availabilityKey(row.equipment_id, row.variant_id ?? null);
+    const prev = allocMap.get(key) ?? 0;
+    allocMap.set(key, prev + (row.qty ?? 0));
   }
 
   const result = new Map<string, EquipmentAvailability>();
   for (const eq of equipRows ?? []) {
-    let total = 0;
-    if (eq.type === "serialized") {
-      const units =
-        (eq.equipment_units as unknown as { id: string; status: string }[]) ?? [];
-      total = units.filter(
-        (u) => u.status !== "maintenance" && u.status !== "inactive"
-      ).length;
-    } else {
-      const bulk =
-        (eq.bulk_inventory as unknown as { total_qty: number }[] | null)?.[0] ??
-        null;
-      total = bulk?.total_qty ?? 0;
+    const variantIds =
+      (eq.equipment_variants as unknown as { id: string }[] | null)?.map((v) => v.id) ?? [];
+    const units =
+      (eq.equipment_units as unknown as { id: string; variant_id: string | null; status: string }[]) ?? [];
+    const bulkRows =
+      (eq.bulk_inventory as unknown as { variant_id: string | null; total_qty: number }[]) ?? [];
+
+    function pushAvailability(variantId: string | null) {
+      let total = 0;
+      if (eq.type === "serialized") {
+        total = units.filter(
+          (u) => u.variant_id === variantId && u.status !== "maintenance" && u.status !== "inactive"
+        ).length;
+      } else {
+        const bulk = bulkRows.find((b) => b.variant_id === variantId);
+        total = bulk?.total_qty ?? 0;
+      }
+      const key = availabilityKey(eq.id, variantId);
+      const allocated = allocMap.get(key) ?? 0;
+      result.set(key, {
+        total,
+        allocated,
+        available: Math.max(0, total - allocated),
+      });
     }
-    const allocated = allocMap.get(eq.id) ?? 0;
-    result.set(eq.id, {
-      total,
-      allocated,
-      available: Math.max(0, total - allocated),
-    });
+
+    if (eq.has_variants && variantIds.length > 0) {
+      for (const vid of variantIds) pushAvailability(vid);
+    } else {
+      pushAvailability(null);
+    }
   }
 
   return result;

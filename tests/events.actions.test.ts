@@ -21,8 +21,14 @@ vi.mock("@/lib/auth/session", () => ({
 vi.mock("@/lib/checklist-templates", () => ({
   getChecklistTemplate: mocks.getChecklistTemplate,
 }));
-vi.mock("@/lib/inventory", () => ({
+const inventoryMock = vi.hoisted(() => ({
   getEquipmentAvailability: vi.fn().mockResolvedValue(new Map()),
+}));
+
+vi.mock("@/lib/inventory", () => ({
+  getEquipmentAvailability: inventoryMock.getEquipmentAvailability,
+  availabilityKey: (equipmentId: string, variantId: string | null | undefined) =>
+    variantId ? `${equipmentId}:${variantId}` : equipmentId,
 }));
 
 import {
@@ -32,6 +38,7 @@ import {
   updateEventDetails,
   addEventDate,
   addEventDateTeamMember,
+  setEventEquipmentBatch,
 } from "@/app/(dashboard)/events/actions";
 
 function buildFormData(values: Record<string, string>) {
@@ -807,5 +814,153 @@ describe("events actions", () => {
     ).rejects.toThrow(/Membro%20inv%C3%A1lido/);
 
     expect(teamInsert).not.toHaveBeenCalled();
+  });
+
+  // ── Refactor E: setEventEquipmentBatch + variant_id ────────────
+
+  it("setEventEquipmentBatch parses qty_<eqId>__<variantId> and persists variant_id on insert", async () => {
+    const eventFetchMaybeSingle = vi.fn().mockResolvedValue({
+      data: {
+        id: "event-1",
+        organization_id: "org-1",
+        status: "planning",
+        start_date: "2026-08-10",
+        end_date: "2026-08-11",
+      },
+      error: null,
+    });
+    const eventFetchEq = vi.fn().mockReturnValue({ maybeSingle: eventFetchMaybeSingle });
+    const eventFetchSelect = vi.fn().mockReturnValue({ eq: eventFetchEq });
+
+    const equipInChain = vi.fn().mockResolvedValue({
+      data: [
+        { id: "eq-1", organization_id: "org-1" },
+        { id: "eq-2", organization_id: "org-1" },
+      ],
+      error: null,
+    });
+    const equipSelect = vi.fn().mockReturnValue({ in: equipInChain });
+
+    const currentFetchIs = vi.fn().mockResolvedValue({ data: [], error: null });
+    const currentFetchEq = vi.fn().mockReturnValue({ is: currentFetchIs });
+    const currentFetchSelect = vi.fn().mockReturnValue({ eq: currentFetchEq });
+
+    const eqInsert = vi.fn().mockResolvedValue({ error: null });
+
+    mocks.createSupabaseAdminClient.mockReturnValue({
+      from: vi.fn((table: string) => {
+        if (table === "events") return { select: eventFetchSelect };
+        if (table === "equipment") return { select: equipSelect };
+        if (table === "event_equipment") {
+          // 1ª chamada select para currentRows, 2ª insert
+          return { select: currentFetchSelect, insert: eqInsert };
+        }
+        return {};
+      }),
+    });
+    mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+
+    const fd = new FormData();
+    fd.set("eventId", "event-1");
+    fd.set("qty_eq-1", "2"); // sem variante
+    fd.set("qty_eq-2__var-A", "5"); // variante específica
+
+    await expect(setEventEquipmentBatch(fd)).rejects.toThrow(
+      /success=Lista%20de%20equipamentos%20atualizada/
+    );
+
+    expect(eqInsert).toHaveBeenCalledTimes(1);
+    const inserts = eqInsert.mock.calls[0][0] as Array<Record<string, unknown>>;
+    // Espera 2 inserts. Ordem pode variar pela iteração de Map; valida por presença.
+    expect(inserts).toHaveLength(2);
+    expect(inserts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          event_id: "event-1",
+          equipment_id: "eq-1",
+          variant_id: null,
+          qty: 2,
+          loaded: false,
+        }),
+        expect.objectContaining({
+          event_id: "event-1",
+          equipment_id: "eq-2",
+          variant_id: "var-A",
+          qty: 5,
+          loaded: false,
+        }),
+      ])
+    );
+  });
+
+  it("promoteToReadyToLoad blocks when a variant is oversold and includes its label", async () => {
+    const items = [{ id: "i1", done: true, required: true }];
+
+    inventoryMock.getEquipmentAvailability.mockResolvedValueOnce(
+      new Map([
+        ["eq-1:var-A", { available: 1, total: 1 }],
+      ])
+    );
+
+    mocks.createSupabaseAdminClient.mockReturnValue({
+      from: vi.fn((table: string) => {
+        if (table === "event_checklist_items") {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockResolvedValue({ data: items, error: null }),
+            }),
+          };
+        }
+        if (table === "events") {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                maybeSingle: vi.fn().mockResolvedValue({
+                  data: {
+                    organization_id: "org-1",
+                    start_date: "2026-08-10",
+                    end_date: "2026-08-11",
+                  },
+                  error: null,
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === "event_equipment") {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                is: vi.fn().mockResolvedValue({
+                  data: [
+                    {
+                      equipment_id: "eq-1",
+                      variant_id: "var-A",
+                      qty: 3,
+                      unit_id: null,
+                      equipment: { name: "Cabo XLR" },
+                      equipment_variants: { label: "5M" },
+                    },
+                  ],
+                  error: null,
+                }),
+              }),
+            }),
+          };
+        }
+        return {};
+      }),
+    });
+    mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+
+    let thrown = "";
+    try {
+      await promoteToReadyToLoad(buildFormData({ eventId: "event-1" }));
+    } catch (e) {
+      thrown = (e as Error).message;
+    }
+
+    expect(thrown).toMatch(/Estoque%20insuficiente|Estoque insuficiente/);
+    expect(thrown).toMatch(/Cabo%20XLR%205M|Cabo XLR 5M/);
   });
 });

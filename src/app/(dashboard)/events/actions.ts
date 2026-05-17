@@ -6,7 +6,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/server";
 import { getCurrentUserContext } from "@/lib/auth/session";
 import { DEFAULT_CHECKLIST_ITEMS, isChecklistComplete } from "@/lib/events";
 import { getChecklistTemplate } from "@/lib/checklist-templates";
-import { getEquipmentAvailability } from "@/lib/inventory";
+import { getEquipmentAvailability, availabilityKey } from "@/lib/inventory";
 
 const WRITE_ROLES = ["super_admin", "admin", "operations"] as const;
 const CHECKLIST_ROLES = ["super_admin", "admin", "operations", "warehouse"] as const;
@@ -252,22 +252,26 @@ export async function promoteToReadyToLoad(formData: FormData) {
 
   const { data: equipRows, error: equipFetchErr } = await supabase
     .from("event_equipment")
-    .select("equipment_id, qty, unit_id, equipment(name)")
+    .select("equipment_id, variant_id, qty, unit_id, equipment(name), equipment_variants(label)")
     .eq("event_id", eventId)
     .is("unit_id", null);
   if (equipFetchErr) {
     redirect(`/events/${eventId}?error=${encodeURIComponent(equipFetchErr.message)}`);
   }
 
-  const desiredByEquipment = new Map<string, { qty: number; name: string }>();
+  const desiredByKey = new Map<string, { qty: number; name: string }>();
   for (const r of equipRows ?? []) {
     const equipmentRel = (r as unknown as { equipment: { name: string } | null }).equipment;
-    const name = equipmentRel?.name ?? "—";
-    const prev = desiredByEquipment.get(r.equipment_id) ?? { qty: 0, name };
-    desiredByEquipment.set(r.equipment_id, { qty: prev.qty + r.qty, name });
+    const variantRel = (r as unknown as { equipment_variants: { label: string } | null })
+      .equipment_variants;
+    const baseName = equipmentRel?.name ?? "—";
+    const name = variantRel ? `${baseName} ${variantRel.label}` : baseName;
+    const key = availabilityKey(r.equipment_id, r.variant_id ?? null);
+    const prev = desiredByKey.get(key) ?? { qty: 0, name };
+    desiredByKey.set(key, { qty: prev.qty + r.qty, name });
   }
 
-  if (desiredByEquipment.size > 0) {
+  if (desiredByKey.size > 0) {
     const availability = await getEquipmentAvailability(
       organizationId,
       eventRow.start_date,
@@ -275,8 +279,8 @@ export async function promoteToReadyToLoad(formData: FormData) {
       eventId
     );
     const oversold: { name: string; qty: number; available: number }[] = [];
-    for (const [equipmentId, { qty, name }] of desiredByEquipment.entries()) {
-      const avail = availability.get(equipmentId)?.available ?? 0;
+    for (const [key, { qty, name }] of desiredByKey.entries()) {
+      const avail = availability.get(key)?.available ?? 0;
       if (qty > avail) oversold.push({ name, qty, available: avail });
     }
     if (oversold.length > 0) {
@@ -368,14 +372,20 @@ export async function setEventEquipmentBatch(formData: FormData) {
   const eventId = String(formData.get("eventId") ?? "").trim();
   if (!eventId) redirect("/events?error=Evento inválido.");
 
-  // Extrai pares (equipmentId -> qty) do FormData
-  const desired = new Map<string, number>();
+  // Extrai pares do FormData. Formatos aceitos:
+  //   qty_<equipmentId>                  → sem variante
+  //   qty_<equipmentId>__<variantId>     → variante específica (separador __ )
+  type DesiredRow = { equipmentId: string; variantId: string | null; qty: number };
+  const desired = new Map<string, DesiredRow>();
   for (const [key, value] of formData.entries()) {
     if (!key.startsWith("qty_")) continue;
-    const equipmentId = key.slice(4);
+    const rest = key.slice(4);
+    const [equipmentId, variantId] = rest.split("__");
+    if (!equipmentId) continue;
     const qty = parseInt(String(value ?? "0"), 10);
     if (isNaN(qty) || qty < 0) continue;
-    desired.set(equipmentId, qty);
+    const vid = variantId || null;
+    desired.set(availabilityKey(equipmentId, vid), { equipmentId, variantId: vid, qty });
   }
 
   if (desired.size === 0) {
@@ -396,7 +406,7 @@ export async function setEventEquipmentBatch(formData: FormData) {
   }
 
   // Confirma que todos os equipamentos solicitados são da mesma org
-  const equipmentIds = Array.from(desired.keys());
+  const equipmentIds = Array.from(new Set(Array.from(desired.values()).map((d) => d.equipmentId)));
   const { data: equipRows, error: equipErr } = await supabase
     .from("equipment")
     .select("id, organization_id")
@@ -413,22 +423,23 @@ export async function setEventEquipmentBatch(formData: FormData) {
     redirect(`/events/${eventId}?error=Um ou mais equipamentos são inválidos.`);
   }
 
-  // Carrega estado atual (somente linhas bulk-style, unit_id IS NULL)
+  // Carrega estado atual (somente linhas bulk-style, unit_id IS NULL).
   const { data: currentRows, error: currentErr } = await supabase
     .from("event_equipment")
-    .select("id, equipment_id, qty")
+    .select("id, equipment_id, variant_id, qty")
     .eq("event_id", eventId)
     .is("unit_id", null);
   if (currentErr) {
     redirect(`/events/${eventId}?error=${encodeURIComponent(currentErr.message)}`);
   }
 
-  const currentByEquipment = new Map<string, { id: string; qty: number }>();
+  const currentByKey = new Map<string, { id: string; qty: number }>();
   for (const r of currentRows ?? []) {
-    currentByEquipment.set(r.equipment_id, { id: r.id, qty: r.qty });
+    const k = availabilityKey(r.equipment_id, r.variant_id ?? null);
+    currentByKey.set(k, { id: r.id, qty: r.qty });
   }
 
-  // Valida disponibilidade conforme o status do evento.
+  // Disponibilidade conforme o status do evento.
   // - planning  : aceita overbooking (UI permite, gate impede promoção depois).
   // - outros    : hard block.
   const availability = await getEquipmentAvailability(
@@ -439,12 +450,12 @@ export async function setEventEquipmentBatch(formData: FormData) {
   );
 
   if (eventRow.status !== "planning") {
-    const oversold: { id: string; qty: number; available: number }[] = [];
-    for (const [equipmentId, qty] of desired.entries()) {
-      if (qty <= 0) continue;
-      const avail = availability.get(equipmentId)?.available ?? 0;
-      if (qty > avail) {
-        oversold.push({ id: equipmentId, qty, available: avail });
+    const oversold: { qty: number; available: number }[] = [];
+    for (const [key, row] of desired.entries()) {
+      if (row.qty <= 0) continue;
+      const avail = availability.get(key)?.available ?? 0;
+      if (row.qty > avail) {
+        oversold.push({ qty: row.qty, available: avail });
       }
     }
     if (oversold.length > 0) {
@@ -460,25 +471,32 @@ export async function setEventEquipmentBatch(formData: FormData) {
     }
   }
 
-  const inserts: { event_id: string; equipment_id: string; qty: number; loaded: boolean }[] = [];
+  const inserts: {
+    event_id: string;
+    equipment_id: string;
+    variant_id: string | null;
+    qty: number;
+    loaded: boolean;
+  }[] = [];
   const updates: { id: string; qty: number }[] = [];
   const deletes: string[] = [];
 
-  for (const [equipmentId, qty] of desired.entries()) {
-    const existing = currentByEquipment.get(equipmentId);
-    if (qty <= 0) {
+  for (const [key, row] of desired.entries()) {
+    const existing = currentByKey.get(key);
+    if (row.qty <= 0) {
       if (existing) deletes.push(existing.id);
       continue;
     }
     if (!existing) {
       inserts.push({
         event_id: eventId,
-        equipment_id: equipmentId,
-        qty,
+        equipment_id: row.equipmentId,
+        variant_id: row.variantId,
+        qty: row.qty,
         loaded: false,
       });
-    } else if (existing.qty !== qty) {
-      updates.push({ id: existing.id, qty });
+    } else if (existing.qty !== row.qty) {
+      updates.push({ id: existing.id, qty: row.qty });
     }
   }
 
@@ -513,10 +531,10 @@ export async function setEventEquipmentBatch(formData: FormData) {
   let warning = "";
   if (eventRow.status === "planning") {
     const oversold: { qty: number; available: number }[] = [];
-    for (const [equipmentId, qty] of desired.entries()) {
-      if (qty <= 0) continue;
-      const avail = availability.get(equipmentId)?.available ?? 0;
-      if (qty > avail) oversold.push({ qty, available: avail });
+    for (const [key, row] of desired.entries()) {
+      if (row.qty <= 0) continue;
+      const avail = availability.get(key)?.available ?? 0;
+      if (row.qty > avail) oversold.push({ qty: row.qty, available: avail });
     }
     if (oversold.length > 0) {
       warning = ` Atenção: ${oversold.length} item(s) acima do disponível — resolva antes de promover a OS.`;

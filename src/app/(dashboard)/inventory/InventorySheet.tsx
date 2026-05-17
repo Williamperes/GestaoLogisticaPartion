@@ -75,10 +75,26 @@ export function InventorySheet({ categories }: InventorySheetProps) {
                   <option value="">Sem categoria</option>
                   {categories.map((c) => (
                     <option key={c.id} value={c.id}>
-                      {c.name}
+                      {c.parentCategoryName ? `${c.parentCategoryName} › ${c.name}` : c.name}
                     </option>
                   ))}
                 </select>
+              </label>
+
+              <label className="flex items-start gap-3 rounded-xl border border-border bg-background/40 px-4 py-3">
+                <input
+                  type="checkbox"
+                  name="hasVariants"
+                  className="mt-0.5 h-4 w-4 rounded border-border accent-amber-500"
+                />
+                <div className="space-y-0.5">
+                  <p className="text-sm font-medium">Tem variantes de tamanho</p>
+                  <p className="text-xs text-muted-foreground">
+                    Marque se o item tem versões por tamanho (ex.: 5M, 10M, P, M, G).
+                    A unidade abaixo NÃO será criada; configure as variantes
+                    depois na página de detalhe.
+                  </p>
+                </div>
               </label>
             </div>
 

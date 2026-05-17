@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Plus, Minus, Search, Package, AlertTriangle } from "lucide-react";
+import { Plus, Minus, Search, Package, AlertTriangle, Layers } from "lucide-react";
 
 import {
   Sheet,
@@ -19,49 +19,72 @@ import type { EventStatus } from "@/lib/events";
 const SEARCH_CLASS =
   "w-full rounded-2xl border border-border bg-background px-9 py-2.5 text-sm outline-none transition focus:border-primary/50 focus:ring-4 focus:ring-primary/10";
 
+interface VariantOption {
+  id: string;
+  label: string;
+  total: number;
+  allocatedByOthers: number;
+  available: number;
+}
+
 interface EquipmentOption {
   id: string;
   name: string;
   type: "serialized" | "bulk";
   categoryName: string | null;
-  total: number;             // capacidade total (descontando manutenção/inativo)
-  allocatedByOthers: number; // já reservado em outras OS sobrepostas
-  available: number;         // total - allocatedByOthers (clamp >= 0)
+  hasVariants: boolean;
+  /** Total/disp para itens SEM variante. Para itens com variantes, ignorar e usar variants[]. */
+  total: number;
+  allocatedByOthers: number;
+  available: number;
+  variants?: VariantOption[];
 }
 
 interface AddEquipmentSheetProps {
   eventId: string;
   eventStatus: EventStatus;
   equipment: EquipmentOption[];
-  /** equipmentId -> qty atual nesta OS (bulk-style, unit_id IS NULL) */
-  currentQtyByEquipment: Record<string, number>;
+  /**
+   * Chave: `${equipmentId}` (sem variante) ou `${equipmentId}__${variantId}` (com variante).
+   * Valor: qty atual nesta OS (bulk-style, unit_id IS NULL).
+   */
+  currentQtyByKey: Record<string, number>;
 }
 
-// Bloqueio hard só a partir de ready_to_load. Planning permite com aviso.
 function isHardBlocking(status: EventStatus): boolean {
   return status !== "planning";
+}
+
+function rowKey(equipmentId: string, variantId: string | null): string {
+  return variantId ? `${equipmentId}__${variantId}` : equipmentId;
 }
 
 export function AddEquipmentSheet({
   eventId,
   eventStatus,
   equipment,
-  currentQtyByEquipment,
+  currentQtyByKey,
 }: AddEquipmentSheetProps) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
-  const [qtys, setQtys] = useState<Record<string, number>>(currentQtyByEquipment);
+  const [qtys, setQtys] = useState<Record<string, number>>(currentQtyByKey);
 
   const hardBlock = isHardBlocking(eventStatus);
 
-  // Esconde itens sem disponibilidade no período, EXCETO se já estão na OS atual
-  // (mantém visível pra dar contexto e permitir reduzir/remover).
+  // Itens visíveis: filtra fora os que não têm disponibilidade alguma e
+  // também não estão na OS atual.
   const visible = useMemo(() => {
     return equipment.filter((e) => {
-      const inOS = (currentQtyByEquipment[e.id] ?? 0) > 0;
+      if (e.hasVariants && e.variants && e.variants.length > 0) {
+        return e.variants.some((v) => {
+          const inOS = (currentQtyByKey[rowKey(e.id, v.id)] ?? 0) > 0;
+          return v.available > 0 || inOS;
+        });
+      }
+      const inOS = (currentQtyByKey[e.id] ?? 0) > 0;
       return e.available > 0 || inOS;
     });
-  }, [equipment, currentQtyByEquipment]);
+  }, [equipment, currentQtyByKey]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -92,17 +115,27 @@ export function AddEquipmentSheet({
 
   // Pré-calcula itens em conflito (qty selecionada > available)
   const overbooked = useMemo(() => {
-    const out: { id: string; name: string; qty: number; available: number }[] = [];
+    const out: { key: string; name: string; qty: number; available: number }[] = [];
     for (const eq of equipment) {
-      const qty = qtys[eq.id] ?? 0;
-      if (qty > eq.available) {
-        out.push({ id: eq.id, name: eq.name, qty, available: eq.available });
+      if (eq.hasVariants && eq.variants && eq.variants.length > 0) {
+        for (const v of eq.variants) {
+          const k = rowKey(eq.id, v.id);
+          const qty = qtys[k] ?? 0;
+          if (qty > v.available) {
+            out.push({ key: k, name: `${eq.name} ${v.label}`, qty, available: v.available });
+          }
+        }
+      } else {
+        const qty = qtys[eq.id] ?? 0;
+        if (qty > eq.available) {
+          out.push({ key: eq.id, name: eq.name, qty, available: eq.available });
+        }
       }
     }
     return out;
   }, [equipment, qtys]);
 
-  function setQty(id: string, next: number, cap?: number) {
+  function setQty(key: string, next: number, cap?: number) {
     setQtys((prev) => {
       let value = Math.max(0, Math.floor(next));
       if (hardBlock && typeof cap === "number") {
@@ -110,10 +143,10 @@ export function AddEquipmentSheet({
       }
       if (value === 0) {
         const copy = { ...prev };
-        delete copy[id];
+        delete copy[key];
         return copy;
       }
-      return { ...prev, [id]: value };
+      return { ...prev, [key]: value };
     });
   }
 
@@ -123,7 +156,7 @@ export function AddEquipmentSheet({
       onOpenChange={(next) => {
         setOpen(next);
         if (next) {
-          setQtys(currentQtyByEquipment);
+          setQtys(currentQtyByKey);
           setSearch("");
         }
       }}
@@ -199,14 +232,27 @@ export function AddEquipmentSheet({
           </div>
 
           <div className="flex-1 overflow-y-auto px-6 py-4">
-            {equipment.map((e) => (
-              <input
-                key={`hidden-${e.id}`}
-                type="hidden"
-                name={`qty_${e.id}`}
-                value={qtys[e.id] ?? 0}
-              />
-            ))}
+            {/* Hidden inputs cobrem TODO o universo — assim quando uma row some
+                no save, o batch enxerga qty=0 e deleta. */}
+            {equipment.map((e) =>
+              e.hasVariants && e.variants && e.variants.length > 0 ? (
+                e.variants.map((v) => (
+                  <input
+                    key={`hidden-${e.id}-${v.id}`}
+                    type="hidden"
+                    name={`qty_${e.id}__${v.id}`}
+                    value={qtys[rowKey(e.id, v.id)] ?? 0}
+                  />
+                ))
+              ) : (
+                <input
+                  key={`hidden-${e.id}`}
+                  type="hidden"
+                  name={`qty_${e.id}`}
+                  value={qtys[e.id] ?? 0}
+                />
+              )
+            )}
 
             {grouped.length === 0 ? (
               <div className="flex flex-col items-center justify-center rounded-xl border border-border bg-card py-12 text-center">
@@ -227,95 +273,25 @@ export function AddEquipmentSheet({
                       {categoryName}
                     </h3>
                     <ul className="overflow-hidden rounded-xl border border-border bg-card">
-                      {items.map((item) => {
-                        const qty = qtys[item.id] ?? 0;
-                        const isSelected = qty > 0;
-                        const over = qty > item.available;
-                        const noStock = item.available === 0 && qty === 0;
-                        return (
-                          <li
+                      {items.map((item) =>
+                        item.hasVariants && item.variants && item.variants.length > 0 ? (
+                          <VariantGroup
                             key={item.id}
-                            className={`flex items-center gap-3 border-b border-border px-4 py-3 last:border-b-0 transition-colors ${
-                              over
-                                ? hardBlock
-                                  ? "bg-red-500/5"
-                                  : "bg-amber-500/5"
-                                : isSelected
-                                ? "bg-amber-500/5"
-                                : ""
-                            }`}
-                          >
-                            <div className="min-w-0 flex-1">
-                              <p className="truncate text-sm font-medium">{item.name}</p>
-                              <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] uppercase tracking-wide">
-                                <span className="text-muted-foreground">
-                                  {item.type === "serialized" ? "Serializado" : "Lote"}
-                                </span>
-                                <span
-                                  className={
-                                    over
-                                      ? hardBlock
-                                        ? "font-semibold text-red-600"
-                                        : "font-semibold text-amber-600"
-                                      : noStock
-                                      ? "font-semibold text-muted-foreground/60"
-                                      : "text-emerald-600"
-                                  }
-                                >
-                                  {item.available} disp.
-                                </span>
-                                <span className="text-muted-foreground/60">
-                                  · Total {item.total}
-                                  {item.allocatedByOthers > 0 &&
-                                    ` (em outras OS: ${item.allocatedByOthers})`}
-                                </span>
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-1.5">
-                              <button
-                                type="button"
-                                onClick={() => setQty(item.id, qty - 1, item.available)}
-                                disabled={qty <= 0}
-                                className="flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-background text-muted-foreground transition-colors hover:border-amber-500/50 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-30"
-                                aria-label={`Diminuir ${item.name}`}
-                              >
-                                <Minus className="h-3 w-3" />
-                              </button>
-                              <input
-                                type="number"
-                                min={0}
-                                max={hardBlock ? item.available : undefined}
-                                value={qty}
-                                onChange={(e) =>
-                                  setQty(
-                                    item.id,
-                                    parseInt(e.target.value || "0", 10),
-                                    item.available
-                                  )
-                                }
-                                className={`h-8 w-14 rounded-lg border bg-background text-center text-sm font-semibold tabular-nums outline-none transition focus:ring-2 ${
-                                  over
-                                    ? hardBlock
-                                      ? "border-red-500/60 text-red-600 focus:border-red-500/70 focus:ring-red-500/10"
-                                      : "border-amber-500/60 text-amber-600 focus:border-amber-500/70 focus:ring-amber-500/10"
-                                    : isSelected
-                                    ? "border-border text-amber-600 focus:border-primary/50 focus:ring-primary/10"
-                                    : "border-border focus:border-primary/50 focus:ring-primary/10"
-                                }`}
-                              />
-                              <button
-                                type="button"
-                                onClick={() => setQty(item.id, qty + 1, item.available)}
-                                disabled={hardBlock && qty >= item.available}
-                                className="flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-background text-muted-foreground transition-colors hover:border-amber-500/50 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-30"
-                                aria-label={`Aumentar ${item.name}`}
-                              >
-                                <Plus className="h-3 w-3" />
-                              </button>
-                            </div>
-                          </li>
-                        );
-                      })}
+                            item={item}
+                            qtys={qtys}
+                            setQty={setQty}
+                            hardBlock={hardBlock}
+                          />
+                        ) : (
+                          <SingleRow
+                            key={item.id}
+                            item={item}
+                            qty={qtys[item.id] ?? 0}
+                            setQty={setQty}
+                            hardBlock={hardBlock}
+                          />
+                        )
+                      )}
                     </ul>
                   </section>
                 ))}
@@ -337,5 +313,214 @@ export function AddEquipmentSheet({
         </form>
       </SheetContent>
     </Sheet>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────
+// Sub-components
+// ──────────────────────────────────────────────────────────────────
+
+function SingleRow({
+  item,
+  qty,
+  setQty,
+  hardBlock,
+}: {
+  item: EquipmentOption;
+  qty: number;
+  setQty: (key: string, next: number, cap?: number) => void;
+  hardBlock: boolean;
+}) {
+  const isSelected = qty > 0;
+  const over = qty > item.available;
+  const noStock = item.available === 0 && qty === 0;
+  return (
+    <li
+      className={`flex items-center gap-3 border-b border-border px-4 py-3 last:border-b-0 transition-colors ${
+        over
+          ? hardBlock
+            ? "bg-red-500/5"
+            : "bg-amber-500/5"
+          : isSelected
+          ? "bg-amber-500/5"
+          : ""
+      }`}
+    >
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-medium">{item.name}</p>
+        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] uppercase tracking-wide">
+          <span className="text-muted-foreground">
+            {item.type === "serialized" ? "Serializado" : "Lote"}
+          </span>
+          <span
+            className={
+              over
+                ? hardBlock
+                  ? "font-semibold text-red-600"
+                  : "font-semibold text-amber-600"
+                : noStock
+                ? "font-semibold text-muted-foreground/60"
+                : "text-emerald-600"
+            }
+          >
+            {item.available} disp.
+          </span>
+          <span className="text-muted-foreground/60">
+            · Total {item.total}
+            {item.allocatedByOthers > 0 && ` (em outras OS: ${item.allocatedByOthers})`}
+          </span>
+        </div>
+      </div>
+      <Stepper
+        qty={qty}
+        available={item.available}
+        hardBlock={hardBlock}
+        over={over}
+        onChange={(next) => setQty(item.id, next, item.available)}
+        ariaName={item.name}
+      />
+    </li>
+  );
+}
+
+function VariantGroup({
+  item,
+  qtys,
+  setQty,
+  hardBlock,
+}: {
+  item: EquipmentOption;
+  qtys: Record<string, number>;
+  setQty: (key: string, next: number, cap?: number) => void;
+  hardBlock: boolean;
+}) {
+  const variants = item.variants ?? [];
+  const totalSelectedHere = variants.reduce(
+    (sum, v) => sum + (qtys[rowKey(item.id, v.id)] ?? 0),
+    0
+  );
+  return (
+    <li className="border-b border-border last:border-b-0">
+      <header className="flex items-center gap-2 px-4 py-2.5 bg-background/30">
+        <Layers className="h-3 w-3 text-amber-600" />
+        <p className="flex-1 truncate text-sm font-medium">{item.name}</p>
+        <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+          {variants.length} variantes · {totalSelectedHere} un. selec.
+        </span>
+      </header>
+      <ul>
+        {variants.map((v) => {
+          const k = rowKey(item.id, v.id);
+          const qty = qtys[k] ?? 0;
+          const isSelected = qty > 0;
+          const over = qty > v.available;
+          const noStock = v.available === 0 && qty === 0;
+          return (
+            <li
+              key={v.id}
+              className={`flex items-center gap-3 border-t border-border/50 pl-8 pr-4 py-2.5 transition-colors ${
+                over
+                  ? hardBlock
+                    ? "bg-red-500/5"
+                    : "bg-amber-500/5"
+                  : isSelected
+                  ? "bg-amber-500/5"
+                  : ""
+              }`}
+            >
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm">
+                  <span className="font-medium text-muted-foreground">→ </span>
+                  {v.label}
+                </p>
+                <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] uppercase tracking-wide">
+                  <span
+                    className={
+                      over
+                        ? hardBlock
+                          ? "font-semibold text-red-600"
+                          : "font-semibold text-amber-600"
+                        : noStock
+                        ? "font-semibold text-muted-foreground/60"
+                        : "text-emerald-600"
+                    }
+                  >
+                    {v.available} disp.
+                  </span>
+                  <span className="text-muted-foreground/60">
+                    · Total {v.total}
+                    {v.allocatedByOthers > 0 && ` (em outras OS: ${v.allocatedByOthers})`}
+                  </span>
+                </div>
+              </div>
+              <Stepper
+                qty={qty}
+                available={v.available}
+                hardBlock={hardBlock}
+                over={over}
+                onChange={(next) => setQty(k, next, v.available)}
+                ariaName={`${item.name} ${v.label}`}
+              />
+            </li>
+          );
+        })}
+      </ul>
+    </li>
+  );
+}
+
+function Stepper({
+  qty,
+  available,
+  hardBlock,
+  over,
+  onChange,
+  ariaName,
+}: {
+  qty: number;
+  available: number;
+  hardBlock: boolean;
+  over: boolean;
+  onChange: (next: number) => void;
+  ariaName: string;
+}) {
+  const isSelected = qty > 0;
+  return (
+    <div className="flex items-center gap-1.5">
+      <button
+        type="button"
+        onClick={() => onChange(qty - 1)}
+        disabled={qty <= 0}
+        className="flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-background text-muted-foreground transition-colors hover:border-amber-500/50 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-30"
+        aria-label={`Diminuir ${ariaName}`}
+      >
+        <Minus className="h-3 w-3" />
+      </button>
+      <input
+        type="number"
+        min={0}
+        max={hardBlock ? available : undefined}
+        value={qty}
+        onChange={(e) => onChange(parseInt(e.target.value || "0", 10))}
+        className={`h-8 w-14 rounded-lg border bg-background text-center text-sm font-semibold tabular-nums outline-none transition focus:ring-2 ${
+          over
+            ? hardBlock
+              ? "border-red-500/60 text-red-600 focus:border-red-500/70 focus:ring-red-500/10"
+              : "border-amber-500/60 text-amber-600 focus:border-amber-500/70 focus:ring-amber-500/10"
+            : isSelected
+            ? "border-border text-amber-600 focus:border-primary/50 focus:ring-primary/10"
+            : "border-border focus:border-primary/50 focus:ring-primary/10"
+        }`}
+      />
+      <button
+        type="button"
+        onClick={() => onChange(qty + 1)}
+        disabled={hardBlock && qty >= available}
+        className="flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-background text-muted-foreground transition-colors hover:border-amber-500/50 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-30"
+        aria-label={`Aumentar ${ariaName}`}
+      >
+        <Plus className="h-3 w-3" />
+      </button>
+    </div>
   );
 }

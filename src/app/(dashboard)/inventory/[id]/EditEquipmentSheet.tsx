@@ -92,10 +92,26 @@ export function EditEquipmentSheet({ equipment, categories }: EditEquipmentSheet
                 <option value="">Sem categoria</option>
                 {categories.map((c) => (
                   <option key={c.id} value={c.id}>
-                    {c.name}
+                    {c.parentCategoryName ? `${c.parentCategoryName} › ${c.name}` : c.name}
                   </option>
                 ))}
               </select>
+            </label>
+
+            <label className="flex items-start gap-3 rounded-xl border border-border bg-background/40 px-4 py-3">
+              <input
+                type="checkbox"
+                name="hasVariants"
+                defaultChecked={equipment.hasVariants}
+                className="mt-0.5 h-4 w-4 rounded border-border accent-amber-500"
+              />
+              <div className="space-y-0.5">
+                <p className="text-sm font-medium">Tem variantes de tamanho</p>
+                <p className="text-xs text-muted-foreground">
+                  Ative para equipamentos como cabos (5M, 10M, 15M) ou tamanhos
+                  (P, M, G). O estoque é controlado por variante na aba abaixo.
+                </p>
+              </div>
             </label>
 
             <label className="space-y-1.5">

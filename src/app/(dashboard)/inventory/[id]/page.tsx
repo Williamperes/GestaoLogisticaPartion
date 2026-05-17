@@ -8,6 +8,7 @@ import {
   listEquipmentCategories,
   formatPurchaseValue,
 } from "@/lib/inventory";
+import { formatDateBR } from "@/lib/dates";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { DeleteConfirmDialog } from "@/components/ui/delete-confirm-dialog";
 import { deleteEquipmentUnit } from "@/app/(dashboard)/inventory/actions";
@@ -15,6 +16,7 @@ import { deleteEquipmentUnit } from "@/app/(dashboard)/inventory/actions";
 import { EditEquipmentSheet } from "@/app/(dashboard)/inventory/[id]/EditEquipmentSheet";
 import { AddUnitSheet } from "@/app/(dashboard)/inventory/[id]/AddUnitSheet";
 import { UnitStatusForm } from "@/app/(dashboard)/inventory/[id]/UnitStatusForm";
+import { VariantManager } from "@/app/(dashboard)/inventory/[id]/VariantManager";
 
 interface Props {
   params: Promise<{ id: string }>;
@@ -110,7 +112,7 @@ export default async function InventoryDetailPage({ params, searchParams }: Prop
             <div>
               <dt className="text-xs text-muted-foreground">Aquisição</dt>
               <dd className="mt-0.5 font-medium">
-                {new Date(equipment.purchaseDate).toLocaleDateString("pt-BR")}
+                {formatDateBR(equipment.purchaseDate)}
               </dd>
             </div>
           )}
@@ -136,6 +138,16 @@ export default async function InventoryDetailPage({ params, searchParams }: Prop
         )}
       </div>
 
+      {/* Variantes (renderiza só quando o equipamento tem variantes) */}
+      {equipment.hasVariants && (
+        <VariantManager
+          equipmentId={equipment.id}
+          equipmentType={equipment.type}
+          variants={equipment.variants ?? []}
+          canWrite={canWrite}
+        />
+      )}
+
       {/* Serialized: units table */}
       {equipment.type === "serialized" && (
         <div className="overflow-hidden rounded-xl border border-border bg-card">
@@ -143,7 +155,12 @@ export default async function InventoryDetailPage({ params, searchParams }: Prop
             <h2 className="text-sm font-semibold">
               Unidades ({equipment.units.length})
             </h2>
-            {canWrite && <AddUnitSheet equipmentId={equipment.id} />}
+            {canWrite && (
+              <AddUnitSheet
+                equipmentId={equipment.id}
+                variants={equipment.hasVariants ? equipment.variants?.map((v) => ({ id: v.id, label: v.label })) : undefined}
+              />
+            )}
           </div>
           {equipment.units.length === 0 ? (
             <div className="px-5 py-8 text-center text-sm text-muted-foreground">

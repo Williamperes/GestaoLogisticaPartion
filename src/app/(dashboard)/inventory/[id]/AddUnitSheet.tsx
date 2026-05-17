@@ -17,11 +17,18 @@ import { addEquipmentUnit } from "@/app/(dashboard)/inventory/actions";
 const INPUT_CLASS =
   "w-full rounded-2xl border border-border bg-background px-4 py-3 text-sm outline-none transition focus:border-primary/50 focus:ring-4 focus:ring-primary/10";
 
-interface AddUnitSheetProps {
-  equipmentId: string;
+interface VariantOption {
+  id: string;
+  label: string;
 }
 
-export function AddUnitSheet({ equipmentId }: AddUnitSheetProps) {
+interface AddUnitSheetProps {
+  equipmentId: string;
+  variants?: VariantOption[];
+}
+
+export function AddUnitSheet({ equipmentId, variants }: AddUnitSheetProps) {
+  const hasVariants = (variants?.length ?? 0) > 0;
   return (
     <Sheet>
       <SheetTrigger render={<Button size="sm" className="rounded-xl" />}>
@@ -44,6 +51,22 @@ export function AddUnitSheet({ equipmentId }: AddUnitSheetProps) {
           <input type="hidden" name="equipmentId" value={equipmentId} />
 
           <div className="flex flex-col gap-5 px-6 py-6">
+            {hasVariants && (
+              <label className="space-y-1.5">
+                <span className="text-sm font-medium text-foreground">Variante *</span>
+                <select name="variantId" required defaultValue="" className={INPUT_CLASS}>
+                  <option value="" disabled>
+                    Selecione uma variante...
+                  </option>
+                  {variants?.map((v) => (
+                    <option key={v.id} value={v.id}>
+                      {v.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+
             <label className="space-y-1.5">
               <span className="text-sm font-medium text-foreground">Número de série *</span>
               <input

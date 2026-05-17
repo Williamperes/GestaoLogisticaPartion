@@ -73,7 +73,7 @@ export default async function InventoryPage({ searchParams }: InventoryPageProps
           </p>
           {canWrite && !search && (
             <p className="mt-1 text-xs text-muted-foreground/60">
-              Use o botão "Novo Item" para adicionar.
+              Use o botão &quot;Novo Item&quot; para adicionar.
             </p>
           )}
         </div>
@@ -94,7 +94,11 @@ export default async function InventoryPage({ searchParams }: InventoryPageProps
                   <p className="truncate text-sm font-medium transition-colors group-hover:text-amber-600">
                     {item.name}
                   </p>
-                  <p className="mt-0.5 text-xs text-muted-foreground">{item.categoryName ?? "Sem categoria"}</p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    {item.parentCategoryName
+                      ? `${item.parentCategoryName} › ${item.categoryName ?? ""}`
+                      : item.categoryName ?? "Sem categoria"}
+                  </p>
                 </div>
               </div>
 

@@ -25,6 +25,8 @@ export interface EventEquipmentItem {
   eventId: string;
   equipmentId: string;
   equipmentName: string;
+  variantId: string | null;
+  variantLabel: string | null;
   unitId: string | null;
   unitSerial: string | null;
   unitStatus: string | null;
@@ -184,12 +186,13 @@ export async function getEventById(id: string): Promise<EventDetail | null> {
       organizations!events_client_organization_id_fkey (name),
       event_checklist_items (id, event_id, label, position, section, required, template_item_id, done, done_at, done_by),
       event_equipment (
-        id, event_id, equipment_id, unit_id, qty,
+        id, event_id, equipment_id, unit_id, variant_id, qty,
         separated, separated_at, separated_by,
         loaded, loaded_at, loaded_by,
         notes,
         equipment (id, name),
-        equipment_units (id, serial, status)
+        equipment_units (id, serial, status),
+        equipment_variants (id, label)
       )
     `)
     .eq("id", id)
@@ -209,12 +212,14 @@ export async function getEventById(id: string): Promise<EventDetail | null> {
   const equipRows = (
     data.event_equipment as unknown as {
       id: string; event_id: string; equipment_id: string; unit_id: string | null;
+      variant_id: string | null;
       qty: number;
       separated: boolean; separated_at: string | null; separated_by: string | null;
       loaded: boolean; loaded_at: string | null; loaded_by: string | null;
       notes: string | null;
       equipment: { id: string; name: string };
       equipment_units: { id: string; serial: string; status: string } | null;
+      equipment_variants: { id: string; label: string } | null;
     }[]
   ) ?? [];
 
@@ -268,6 +273,8 @@ export async function getEventById(id: string): Promise<EventDetail | null> {
       eventId: e.event_id,
       equipmentId: e.equipment_id,
       equipmentName: e.equipment.name,
+      variantId: e.variant_id,
+      variantLabel: e.equipment_variants?.label ?? null,
       unitId: e.unit_id,
       unitSerial: e.equipment_units?.serial ?? null,
       unitStatus: e.equipment_units?.status ?? null,

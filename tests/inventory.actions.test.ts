@@ -34,6 +34,10 @@ import {
   createCategory,
   renameCategory,
   deleteCategory,
+  createEquipmentVariant,
+  updateEquipmentVariant,
+  deleteEquipmentVariant,
+  updateBulkInventoryVariant,
 } from "@/app/(dashboard)/inventory/actions";
 
 function buildFormData(values: Record<string, string>) {
@@ -257,6 +261,7 @@ describe("inventory actions", () => {
         model: "CL5",
         category_id: "cat-1",
         notes: null,
+        has_variants: false,
       });
       expect(eqFn).toHaveBeenCalledWith("id", "equip-1");
       expect(mocks.revalidatePath).toHaveBeenCalledWith("/inventory/equip-1");
@@ -366,7 +371,8 @@ describe("inventory actions", () => {
   describe("updateBulkInventory", () => {
     it("updates total and available qty and redirects with success", async () => {
       const updateResult = vi.fn().mockResolvedValue({ error: null });
-      const eqFn = vi.fn().mockReturnValue(updateResult);
+      const isFn = vi.fn().mockReturnValue(updateResult);
+      const eqFn = vi.fn().mockReturnValue({ is: isFn });
       const updateFn = vi.fn().mockReturnValue({ eq: eqFn });
 
       mocks.createSupabaseAdminClient.mockReturnValue({
@@ -382,6 +388,7 @@ describe("inventory actions", () => {
 
       expect(updateFn).toHaveBeenCalledWith({ total_qty: 200, available_qty: 150 });
       expect(eqFn).toHaveBeenCalledWith("equipment_id", "equip-1");
+      expect(isFn).toHaveBeenCalledWith("variant_id", null);
       expect(mocks.revalidatePath).toHaveBeenCalledWith("/inventory/equip-1");
     });
 
@@ -419,7 +426,11 @@ describe("inventory actions", () => {
         createCategory(buildFormData({ name: "Vídeo" }))
       ).rejects.toThrow("NEXT_REDIRECT:/inventory/categories?success=Categoria criada.");
 
-      expect(insertFn).toHaveBeenCalledWith({ organization_id: "org-1", name: "Vídeo" });
+      expect(insertFn).toHaveBeenCalledWith({
+        organization_id: "org-1",
+        name: "Vídeo",
+        parent_category_id: null,
+      });
     });
 
     it("rejects when name is empty", async () => {
@@ -443,9 +454,10 @@ describe("inventory actions", () => {
       });
       mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
 
+      // Sem `parentCategoryId` no form → server NÃO inclui parent_category_id no update.
       await expect(
         renameCategory(buildFormData({ categoryId: "cat-1", name: "Áudio Renamed" }))
-      ).rejects.toThrow("NEXT_REDIRECT:/inventory/categories?success=Categoria renomeada.");
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory/categories?success=Categoria atualizada.");
 
       expect(updateFn).toHaveBeenCalledWith({ name: "Áudio Renamed" });
       expect(eqFn).toHaveBeenCalledWith("id", "cat-1");
@@ -501,6 +513,527 @@ describe("inventory actions", () => {
       await expect(
         deleteCategory(buildFormData({ categoryId: "cat-1" }))
       ).rejects.toThrow("NEXT_REDIRECT:/inventory/categories?error=");
+    });
+  });
+
+  // ── Refactor E: parent_category + variantes ─────────────────────
+
+  describe("createCategory parent_category_id", () => {
+    it("rejects when parent has parent (1-level enforcement)", async () => {
+      const parentFetchMaybeSingle = vi.fn().mockResolvedValue({
+        data: {
+          id: "cat-grand",
+          organization_id: "org-1",
+          parent_category_id: "cat-root", // já é sub-categoria
+        },
+        error: null,
+      });
+      const parentFetchEq = vi.fn().mockReturnValue({ maybeSingle: parentFetchMaybeSingle });
+      const parentFetchSelect = vi.fn().mockReturnValue({ eq: parentFetchEq });
+      const insertFn = vi.fn().mockResolvedValue({ error: null });
+
+      mocks.createSupabaseAdminClient.mockReturnValue({
+        from: vi.fn().mockReturnValue({
+          select: parentFetchSelect,
+          insert: insertFn,
+        }),
+      });
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+
+      await expect(
+        createCategory(
+          buildFormData({ name: "Gaveteiro", parentCategoryId: "cat-grand" })
+        )
+      ).rejects.toThrow(/Permitimos apenas 1 nível/);
+
+      expect(insertFn).not.toHaveBeenCalled();
+    });
+
+    it("accepts when parent is a root category", async () => {
+      const parentFetchMaybeSingle = vi.fn().mockResolvedValue({
+        data: { id: "cat-root", organization_id: "org-1", parent_category_id: null },
+        error: null,
+      });
+      const parentFetchEq = vi.fn().mockReturnValue({ maybeSingle: parentFetchMaybeSingle });
+      const parentFetchSelect = vi.fn().mockReturnValue({ eq: parentFetchEq });
+      const insertFn = vi.fn().mockResolvedValue({ error: null });
+
+      mocks.createSupabaseAdminClient.mockReturnValue({
+        from: vi.fn().mockReturnValue({
+          select: parentFetchSelect,
+          insert: insertFn,
+        }),
+      });
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+
+      await expect(
+        createCategory(
+          buildFormData({ name: "Gaveteiro", parentCategoryId: "cat-root" })
+        )
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory/categories?success=Categoria criada.");
+
+      expect(insertFn).toHaveBeenCalledWith({
+        organization_id: "org-1",
+        name: "Gaveteiro",
+        parent_category_id: "cat-root",
+      });
+    });
+  });
+
+  describe("createEquipmentVariant", () => {
+    it("inserts variant row and flips has_variants on first create", async () => {
+      const equipFetchMaybeSingle = vi.fn().mockResolvedValue({
+        data: { id: "eq-1", organization_id: "org-1", type: "bulk", has_variants: false },
+        error: null,
+      });
+      const equipFetchEq = vi.fn().mockReturnValue({ maybeSingle: equipFetchMaybeSingle });
+      const equipFetchSelect = vi.fn().mockReturnValue({ eq: equipFetchEq });
+
+      const variantInsertSingle = vi.fn().mockResolvedValue({ data: { id: "v-1" }, error: null });
+      const variantInsertSelect = vi.fn().mockReturnValue({ single: variantInsertSingle });
+      const variantInsert = vi.fn().mockReturnValue({ select: variantInsertSelect });
+
+      const bulkInsert = vi.fn().mockResolvedValue({ error: null });
+
+      const equipUpdateEq = vi.fn().mockResolvedValue({ error: null });
+      const equipUpdate = vi.fn().mockReturnValue({ eq: equipUpdateEq });
+
+      mocks.createSupabaseAdminClient.mockReturnValue({
+        from: vi.fn((table: string) => {
+          if (table === "equipment") return { select: equipFetchSelect, update: equipUpdate };
+          if (table === "equipment_variants") return { insert: variantInsert };
+          if (table === "bulk_inventory") return { insert: bulkInsert };
+          return {};
+        }),
+      });
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+
+      await expect(
+        createEquipmentVariant(
+          buildFormData({
+            equipmentId: "eq-1",
+            label: "5M",
+            sortValue: "5",
+            position: "0",
+            totalQty: "10",
+            unit: "metros",
+          })
+        )
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory/eq-1?success=Variante criada.");
+
+      expect(variantInsert).toHaveBeenCalledWith({
+        equipment_id: "eq-1",
+        label: "5M",
+        sort_value: 5,
+        position: 0,
+        notes: null,
+      });
+      expect(bulkInsert).toHaveBeenCalledWith({
+        equipment_id: "eq-1",
+        variant_id: "v-1",
+        unit: "metros",
+        total_qty: 10,
+        available_qty: 10,
+      });
+      // Equipment ganhou has_variants=true porque estava false.
+      expect(equipUpdate).toHaveBeenCalledWith({ has_variants: true });
+    });
+
+    it("rejects when label is empty", async () => {
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+      await expect(
+        createEquipmentVariant(buildFormData({ equipmentId: "eq-1", label: "" }))
+      ).rejects.toThrow(/Label da variante é obrigatório/);
+    });
+  });
+
+  describe("deleteEquipmentVariant", () => {
+    it("blocks delete when variant is in use by an OS", async () => {
+      const variantFetchMaybeSingle = vi.fn().mockResolvedValue({
+        data: {
+          id: "v-1",
+          equipment_id: "eq-1",
+          equipment: { organization_id: "org-1" },
+        },
+        error: null,
+      });
+      const variantFetchEq = vi.fn().mockReturnValue({ maybeSingle: variantFetchMaybeSingle });
+      const variantFetchSelect = vi.fn().mockReturnValue({ eq: variantFetchEq });
+
+      const usageEq = vi.fn().mockResolvedValue({ count: 2, error: null });
+      const usageSelect = vi.fn().mockReturnValue({ eq: usageEq });
+
+      const variantDelete = vi.fn().mockResolvedValue({ error: null });
+
+      mocks.createSupabaseAdminClient.mockReturnValue({
+        from: vi.fn((table: string) => {
+          if (table === "equipment_variants")
+            return { select: variantFetchSelect, delete: variantDelete };
+          if (table === "event_equipment") return { select: usageSelect };
+          return {};
+        }),
+      });
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+
+      await expect(
+        deleteEquipmentVariant(buildFormData({ variantId: "v-1" }))
+      ).rejects.toThrow(/vinculada%20a%20uma%20OS|vinculada a uma OS/);
+
+      expect(variantDelete).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── updateEquipmentVariant ─────────────────────────────────────────
+
+  describe("updateEquipmentVariant", () => {
+    it("updates label/sortValue/position and redirects with success", async () => {
+      const variantFetchMaybeSingle = vi.fn().mockResolvedValue({
+        data: {
+          id: "v-1",
+          equipment_id: "eq-1",
+          equipment: { organization_id: "org-1" },
+        },
+        error: null,
+      });
+      const variantFetchEq = vi.fn().mockReturnValue({ maybeSingle: variantFetchMaybeSingle });
+      const variantFetchSelect = vi.fn().mockReturnValue({ eq: variantFetchEq });
+
+      const variantUpdateEq = vi.fn().mockResolvedValue({ error: null });
+      const variantUpdate = vi.fn().mockReturnValue({ eq: variantUpdateEq });
+
+      mocks.createSupabaseAdminClient.mockReturnValue({
+        from: vi.fn((table: string) => {
+          if (table === "equipment_variants")
+            return { select: variantFetchSelect, update: variantUpdate };
+          return {};
+        }),
+      });
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+
+      await expect(
+        updateEquipmentVariant(
+          buildFormData({
+            variantId: "v-1",
+            label: "10M",
+            sortValue: "10",
+            position: "1",
+            notes: "atualizado",
+          })
+        )
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory/eq-1?success=Variante atualizada.");
+
+      expect(variantUpdate).toHaveBeenCalledWith({
+        label: "10M",
+        sort_value: 10,
+        position: 1,
+        notes: "atualizado",
+      });
+      expect(variantUpdateEq).toHaveBeenCalledWith("id", "v-1");
+      expect(mocks.revalidatePath).toHaveBeenCalledWith("/inventory/eq-1");
+      expect(mocks.revalidatePath).toHaveBeenCalledWith("/inventory");
+    });
+  });
+
+  // ── updateBulkInventoryVariant ─────────────────────────────────────
+
+  describe("updateBulkInventoryVariant", () => {
+    it("updates existing row when bulk_inventory entry already exists", async () => {
+      const equipFetchMaybeSingle = vi.fn().mockResolvedValue({
+        data: { id: "eq-1", organization_id: "org-1", type: "bulk", has_variants: true },
+        error: null,
+      });
+      const equipFetchEq = vi.fn().mockReturnValue({ maybeSingle: equipFetchMaybeSingle });
+      const equipFetchSelect = vi.fn().mockReturnValue({ eq: equipFetchEq });
+
+      const existingMaybeSingle = vi.fn().mockResolvedValue({
+        data: { id: "bulk-row-1" },
+        error: null,
+      });
+      const existingEq2 = vi.fn().mockReturnValue({ maybeSingle: existingMaybeSingle });
+      const existingEq1 = vi.fn().mockReturnValue({ eq: existingEq2 });
+      const existingSelect = vi.fn().mockReturnValue({ eq: existingEq1 });
+
+      const updateEq = vi.fn().mockResolvedValue({ error: null });
+      const updateFn = vi.fn().mockReturnValue({ eq: updateEq });
+
+      const bulkInsert = vi.fn().mockResolvedValue({ error: null });
+
+      mocks.createSupabaseAdminClient.mockReturnValue({
+        from: vi.fn((table: string) => {
+          if (table === "equipment") return { select: equipFetchSelect };
+          if (table === "bulk_inventory")
+            return { select: existingSelect, update: updateFn, insert: bulkInsert };
+          return {};
+        }),
+      });
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+
+      await expect(
+        updateBulkInventoryVariant(
+          buildFormData({
+            equipmentId: "eq-1",
+            variantId: "v-1",
+            totalQty: "50",
+            availableQty: "40",
+            unit: "metros",
+          })
+        )
+      ).rejects.toThrow(/success=Estoque/);
+
+      expect(updateFn).toHaveBeenCalledWith({
+        total_qty: 50,
+        available_qty: 40,
+        unit: "metros",
+      });
+      expect(updateEq).toHaveBeenCalledWith("id", "bulk-row-1");
+      expect(bulkInsert).not.toHaveBeenCalled();
+    });
+
+    it("inserts new row when no bulk_inventory entry exists for the variant", async () => {
+      const equipFetchMaybeSingle = vi.fn().mockResolvedValue({
+        data: { id: "eq-1", organization_id: "org-1", type: "bulk", has_variants: true },
+        error: null,
+      });
+      const equipFetchEq = vi.fn().mockReturnValue({ maybeSingle: equipFetchMaybeSingle });
+      const equipFetchSelect = vi.fn().mockReturnValue({ eq: equipFetchEq });
+
+      const existingMaybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
+      const existingEq2 = vi.fn().mockReturnValue({ maybeSingle: existingMaybeSingle });
+      const existingEq1 = vi.fn().mockReturnValue({ eq: existingEq2 });
+      const existingSelect = vi.fn().mockReturnValue({ eq: existingEq1 });
+
+      const updateEq = vi.fn().mockResolvedValue({ error: null });
+      const updateFn = vi.fn().mockReturnValue({ eq: updateEq });
+
+      const bulkInsert = vi.fn().mockResolvedValue({ error: null });
+
+      mocks.createSupabaseAdminClient.mockReturnValue({
+        from: vi.fn((table: string) => {
+          if (table === "equipment") return { select: equipFetchSelect };
+          if (table === "bulk_inventory")
+            return { select: existingSelect, update: updateFn, insert: bulkInsert };
+          return {};
+        }),
+      });
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+
+      await expect(
+        updateBulkInventoryVariant(
+          buildFormData({
+            equipmentId: "eq-1",
+            variantId: "v-2",
+            totalQty: "30",
+            availableQty: "30",
+            unit: "unidades",
+          })
+        )
+      ).rejects.toThrow(/success=Estoque/);
+
+      expect(bulkInsert).toHaveBeenCalledWith({
+        equipment_id: "eq-1",
+        variant_id: "v-2",
+        unit: "unidades",
+        total_qty: 30,
+        available_qty: 30,
+      });
+      expect(updateFn).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── addEquipmentUnit (com variantId) ───────────────────────────────
+
+  describe("addEquipmentUnit with variantId", () => {
+    it("persists variant_id when provided", async () => {
+      const updateResult = vi.fn().mockResolvedValue({ error: null });
+      const updateEqFn = vi.fn().mockReturnValue(updateResult);
+      const updateFn = vi.fn().mockReturnValue({ eq: updateEqFn });
+
+      const insertSingle = vi.fn().mockResolvedValue({ data: { id: "unit-2" }, error: null });
+      const insertSelectFn = vi.fn().mockReturnValue({ single: insertSingle });
+      const insertFn = vi.fn().mockReturnValue({ select: insertSelectFn });
+
+      mocks.createSupabaseAdminClient.mockReturnValue({
+        from: vi.fn((table: string) => {
+          if (table === "equipment_units") return { insert: insertFn, update: updateFn };
+          return {};
+        }),
+      });
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+
+      await expect(
+        addEquipmentUnit(
+          buildFormData({
+            equipmentId: "eq-1",
+            serial: "XLR-5M-001",
+            patrimony: "",
+            notes: "",
+            variantId: "v-5m",
+          })
+        )
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory/eq-1?success=Unidade adicionada.");
+
+      expect(insertFn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          equipment_id: "eq-1",
+          variant_id: "v-5m",
+          serial: "XLR-5M-001",
+          status: "available",
+        })
+      );
+    });
+  });
+
+  // ── createEquipment hasVariants=true skip auto-create ──────────────
+
+  describe("createEquipment with hasVariants=true", () => {
+    it("skips auto-create of unit (serialized) and redirects to detail page", async () => {
+      const equipUpdateResult = vi.fn().mockResolvedValue({ error: null });
+      const eqUpdateEq = vi.fn().mockReturnValue(equipUpdateResult);
+      const equipUpdate2 = vi.fn().mockReturnValue({ eq: eqUpdateEq });
+      const equipInsertSingle = vi.fn().mockResolvedValue({
+        data: { id: "eq-variants" },
+        error: null,
+      });
+      const equipInsertSelectFn = vi.fn().mockReturnValue({ single: equipInsertSingle });
+      const equipInsert = vi.fn().mockReturnValue({ select: equipInsertSelectFn });
+
+      const unitInsert = vi.fn().mockResolvedValue({ error: null });
+
+      let equipCalls = 0;
+      mocks.createSupabaseAdminClient.mockReturnValue({
+        from: vi.fn((table: string) => {
+          if (table === "equipment") {
+            equipCalls++;
+            if (equipCalls === 1) return { insert: equipInsert };
+            return { update: equipUpdate2 };
+          }
+          if (table === "equipment_units") return { insert: unitInsert };
+          return {};
+        }),
+      });
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+
+      await expect(
+        createEquipment(
+          buildFormData({
+            type: "serialized",
+            name: "Cabo XLR",
+            serial: "CABO-XLR-MASTER",
+            hasVariants: "on",
+          })
+        )
+      ).rejects.toThrow(
+        /NEXT_REDIRECT:\/inventory\/eq-variants\?success=Equipamento%20cadastrado/
+      );
+
+      expect(equipInsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: "Cabo XLR",
+          type: "serialized",
+          has_variants: true,
+        })
+      );
+      // Auto-create de unit DEVE ser pulado.
+      expect(unitInsert).not.toHaveBeenCalled();
+    });
+
+    it("skips auto-create of bulk_inventory row when type=bulk + hasVariants=on", async () => {
+      const equipInsertSingle = vi.fn().mockResolvedValue({
+        data: { id: "eq-bulk-var" },
+        error: null,
+      });
+      const equipInsertSelectFn = vi.fn().mockReturnValue({ single: equipInsertSingle });
+      const equipInsert = vi.fn().mockReturnValue({ select: equipInsertSelectFn });
+
+      const bulkInsert = vi.fn().mockResolvedValue({ error: null });
+
+      mocks.createSupabaseAdminClient.mockReturnValue({
+        from: vi.fn((table: string) => {
+          if (table === "equipment") return { insert: equipInsert };
+          if (table === "bulk_inventory") return { insert: bulkInsert };
+          return {};
+        }),
+      });
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+
+      await expect(
+        createEquipment(
+          buildFormData({
+            type: "bulk",
+            name: "Extensão",
+            unit: "metros",
+            hasVariants: "on",
+          })
+        )
+      ).rejects.toThrow(/success=Equipamento%20cadastrado/);
+
+      expect(equipInsert).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "bulk", has_variants: true })
+      );
+      expect(bulkInsert).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── updateEquipment toggling has_variants ──────────────────────────
+
+  describe("updateEquipment has_variants toggle", () => {
+    it("sets has_variants=true when checkbox is on", async () => {
+      const updateResult = vi.fn().mockResolvedValue({ error: null });
+      const eqFn = vi.fn().mockReturnValue(updateResult);
+      const updateFn = vi.fn().mockReturnValue({ eq: eqFn });
+
+      mocks.createSupabaseAdminClient.mockReturnValue({
+        from: vi.fn().mockReturnValue({ update: updateFn }),
+      });
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+
+      await expect(
+        updateEquipment(
+          buildFormData({
+            equipmentId: "equip-1",
+            name: "Mesa CL5",
+            categoryId: "cat-1",
+            hasVariants: "on",
+          })
+        )
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory/equip-1?success=Equipamento atualizado.");
+
+      expect(updateFn).toHaveBeenCalledWith(
+        expect.objectContaining({ has_variants: true })
+      );
+    });
+  });
+
+  // ── renameCategory validation (1-level enforcement) ────────────────
+
+  describe("renameCategory parent_category_id", () => {
+    it("rejects when assigning parent that already has parent (1-level)", async () => {
+      // Mock for validateCategoryParent: parent has parent → reject
+      const parentFetchMaybeSingle = vi.fn().mockResolvedValue({
+        data: {
+          id: "parent-cat",
+          organization_id: "org-1",
+          parent_category_id: "grandparent-cat",
+        },
+        error: null,
+      });
+      const parentFetchEq = vi.fn().mockReturnValue({ maybeSingle: parentFetchMaybeSingle });
+      const parentFetchSelect = vi.fn().mockReturnValue({ eq: parentFetchEq });
+
+      mocks.createSupabaseAdminClient.mockReturnValue({
+        from: vi.fn(() => ({ select: parentFetchSelect })),
+      });
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+
+      await expect(
+        renameCategory(
+          buildFormData({
+            categoryId: "cat-self",
+            name: "Sub-Gaveteiro",
+            parentCategoryId: "parent-cat",
+          })
+        )
+      ).rejects.toThrow(/Permitimos apenas 1 n[íi]vel/);
     });
   });
 });

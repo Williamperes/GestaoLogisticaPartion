@@ -24,6 +24,10 @@ export function CategoryManager({ categories }: CategoryManagerProps) {
   const [creating, setCreating] = useState(false);
   const [renamingId, setRenamingId] = useState<string | null>(null);
 
+  // Categorias-raiz (sem pai). Apenas estas podem ser pai de outras
+  // (limite de 1 nível de hierarquia, enforced também no server).
+  const rootCategories = categories.filter((c) => !c.parentCategoryId);
+
   return (
     <div className="overflow-hidden rounded-xl border border-border bg-card">
       {/* Toolbar */}
@@ -52,15 +56,28 @@ export function CategoryManager({ categories }: CategoryManagerProps) {
             await createCategory(fd);
             setCreating(false);
           }}
-          className="flex items-center gap-2 border-b border-border bg-muted/30 px-5 py-3"
+          className="flex flex-wrap items-center gap-2 border-b border-border bg-muted/30 px-5 py-3"
         >
           <input
             name="name"
             required
             autoFocus
             placeholder="Nome da nova categoria"
-            className={INPUT_CLASS + " flex-1"}
+            className={INPUT_CLASS + " flex-1 min-w-[180px]"}
           />
+          <select
+            name="parentCategoryId"
+            defaultValue=""
+            className={INPUT_CLASS}
+            title="Categoria pai (opcional)"
+          >
+            <option value="">— Sem categoria pai —</option>
+            {rootCategories.map((c) => (
+              <option key={c.id} value={c.id}>
+                Subcategoria de: {c.name}
+              </option>
+            ))}
+          </select>
           <SubmitButton
             idleLabel="Criar"
             pendingLabel="..."
@@ -89,6 +106,9 @@ export function CategoryManager({ categories }: CategoryManagerProps) {
                 Nome
               </th>
               <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Pai
+              </th>
+              <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                 Equipamentos
               </th>
               <th className="w-20 px-4 py-2.5" />
@@ -104,7 +124,7 @@ export function CategoryManager({ categories }: CategoryManagerProps) {
                         await renameCategory(fd);
                         setRenamingId(null);
                       }}
-                      className="flex items-center gap-2"
+                      className="flex flex-wrap items-center gap-2"
                       onKeyDown={(e) => {
                         if (e.key === "Escape") setRenamingId(null);
                       }}
@@ -117,6 +137,21 @@ export function CategoryManager({ categories }: CategoryManagerProps) {
                         defaultValue={cat.name}
                         className={INPUT_CLASS}
                       />
+                      <select
+                        name="parentCategoryId"
+                        defaultValue={cat.parentCategoryId ?? ""}
+                        className={INPUT_CLASS}
+                        title="Categoria pai"
+                      >
+                        <option value="">— Sem pai —</option>
+                        {rootCategories
+                          .filter((root) => root.id !== cat.id)
+                          .map((root) => (
+                            <option key={root.id} value={root.id}>
+                              Subcategoria de: {root.name}
+                            </option>
+                          ))}
+                      </select>
                       <button
                         type="submit"
                         className="rounded-md p-1 text-emerald-600 hover:text-emerald-700"
@@ -133,6 +168,15 @@ export function CategoryManager({ categories }: CategoryManagerProps) {
                     </form>
                   ) : (
                     <span className="font-medium">{cat.name}</span>
+                  )}
+                </td>
+                <td className="px-4 py-3 text-muted-foreground">
+                  {cat.parentCategoryName ? (
+                    <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-700">
+                      {cat.parentCategoryName}
+                    </span>
+                  ) : (
+                    <span className="text-[11px] text-muted-foreground/50">—</span>
                   )}
                 </td>
                 <td className="px-4 py-3 text-muted-foreground">

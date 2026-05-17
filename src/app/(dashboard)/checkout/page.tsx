@@ -130,6 +130,11 @@ export default async function CheckoutPage({ searchParams }: CheckoutPageProps) 
                 <div className="min-w-0 flex-1">
                   <p className={`text-sm font-medium ${item.loaded ? "text-foreground" : "text-muted-foreground"}`}>
                     {item.equipmentName}
+                    {item.variantLabel && (
+                      <span className="ml-2 rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700">
+                        {item.variantLabel}
+                      </span>
+                    )}
                   </p>
                   <p className="font-mono text-[10px] text-muted-foreground">
                     {item.unitSerial ?? `${item.qty} unidade${item.qty !== 1 ? "s" : ""}`}
