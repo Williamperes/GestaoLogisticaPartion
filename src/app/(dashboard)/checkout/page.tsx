@@ -33,7 +33,7 @@ export default async function CheckoutPage({ searchParams }: CheckoutPageProps) 
 
   const canWrite = ["super_admin", "admin", "operations", "warehouse"].includes(context?.role ?? "");
 
-  const confirmed = event.equipment.filter((i) => i.confirmed).length;
+  const confirmed = event.equipment.filter((i) => i.loaded).length;
   const total = event.equipment.length;
   const progress = total > 0 ? Math.round((confirmed / total) * 100) : 0;
   const allClear = confirmed === total && total > 0;
@@ -108,33 +108,33 @@ export default async function CheckoutPage({ searchParams }: CheckoutPageProps) 
                   <form action={confirmCheckoutItem}>
                     <input type="hidden" name="eventEquipmentId" value={item.id} />
                     <input type="hidden" name="eventId" value={event.id} />
-                    <input type="hidden" name="confirmed" value={item.confirmed ? "false" : "true"} />
+                    <input type="hidden" name="confirmed" value={item.loaded ? "false" : "true"} />
                     <button
                       type="submit"
                       className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border transition-all ${
-                        item.confirmed
+                        item.loaded
                           ? "border-emerald-500/40 bg-emerald-500/20 hover:bg-emerald-500/30"
                           : "border-border bg-black/5 hover:border-amber-500/40 hover:bg-amber-500/10"
                       }`}
                     >
-                      {item.confirmed && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />}
-                      {!item.confirmed && <Clock className="h-3 w-3 text-muted-foreground/40" />}
+                      {item.loaded && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />}
+                      {!item.loaded && <Clock className="h-3 w-3 text-muted-foreground/40" />}
                     </button>
                   </form>
                 ) : (
-                  <div className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border ${item.confirmed ? "border-emerald-500/40 bg-emerald-500/20" : "border-border bg-black/5"}`}>
-                    {item.confirmed && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />}
+                  <div className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border ${item.loaded ? "border-emerald-500/40 bg-emerald-500/20" : "border-border bg-black/5"}`}>
+                    {item.loaded && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />}
                   </div>
                 )}
                 <div className="min-w-0 flex-1">
-                  <p className={`text-sm font-medium ${item.confirmed ? "text-foreground" : "text-muted-foreground"}`}>
+                  <p className={`text-sm font-medium ${item.loaded ? "text-foreground" : "text-muted-foreground"}`}>
                     {item.equipmentName}
                   </p>
                   <p className="font-mono text-[10px] text-muted-foreground">
                     {item.unitSerial ?? `${item.qty} unidade${item.qty !== 1 ? "s" : ""}`}
                   </p>
                 </div>
-                {item.confirmed && (
+                {item.loaded && (
                   <span className="text-[10px] font-semibold text-emerald-600">OK</span>
                 )}
               </li>

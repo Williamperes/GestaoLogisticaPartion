@@ -15,6 +15,7 @@ interface DeleteConfirmDialogProps {
   itemName: string;
   itemLabel: string;
   hiddenFieldName?: string;
+  extraFields?: Record<string, string>;
   title?: string;
   description?: string;
   confirmLabel?: string;
@@ -29,6 +30,7 @@ export function DeleteConfirmDialog({
   itemName,
   itemLabel,
   hiddenFieldName = "id",
+  extraFields,
   title,
   description,
   confirmLabel,
@@ -87,6 +89,15 @@ export function DeleteConfirmDialog({
 
               <form action={action}>
                 <input type="hidden" name={hiddenFieldName} value={itemId} />
+                {extraFields &&
+                  Object.entries(extraFields).map(([fieldName, fieldValue]) => (
+                    <input
+                      key={fieldName}
+                      type="hidden"
+                      name={fieldName}
+                      value={fieldValue}
+                    />
+                  ))}
                 <DeleteConfirmSubmitButton
                   confirmLabel={resolvedConfirmLabel}
                   pendingLabel={resolvedPendingLabel}

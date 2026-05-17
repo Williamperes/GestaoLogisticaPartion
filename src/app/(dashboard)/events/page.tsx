@@ -6,6 +6,7 @@ import { EventSheet } from "@/app/(dashboard)/events/EventSheet";
 import { getCurrentUserContext } from "@/lib/auth/session";
 import { listEvents, formatEventStatus, getGateProgress } from "@/lib/events";
 import { listClientOrganizations } from "@/lib/clients";
+import { listChecklistTemplates } from "@/lib/checklist-templates";
 import type { EventStatus } from "@/lib/events";
 
 const STATUS_FILTERS: { label: string; value: EventStatus | "all" }[] = [
@@ -28,12 +29,13 @@ export default async function EventsPage({ searchParams }: EventsPageProps) {
   const context = await getCurrentUserContext();
   const organizationId = context?.primaryOrganization?.id;
 
-  const [events, clients] = organizationId
+  const [events, clients, templates] = organizationId
     ? await Promise.all([
         listEvents(organizationId, search),
         listClientOrganizations(),
+        listChecklistTemplates(organizationId),
       ])
-    : [[], []];
+    : [[], [], []];
 
   const filtered =
     statusFilter === "all"
@@ -51,7 +53,7 @@ export default async function EventsPage({ searchParams }: EventsPageProps) {
             {events.length} {events.length === 1 ? "ordem de serviço" : "ordens de serviço"}
           </p>
         </div>
-        {canCreate && <EventSheet clients={clients} />}
+        {canCreate && <EventSheet clients={clients} templates={templates} />}
       </div>
 
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center">

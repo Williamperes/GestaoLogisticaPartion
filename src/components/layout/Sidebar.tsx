@@ -194,11 +194,25 @@ function SidebarContent({
         <Tooltip>
           <TooltipTrigger
             render={(props) => (
-              <Link href="#" {...(props as React.ComponentPropsWithoutRef<"a">)} />
+              <Link
+                href="/settings"
+                onClick={onItemSelect}
+                {...(props as React.ComponentPropsWithoutRef<"a">)}
+              />
             )}
-            className="flex items-center gap-3 px-2 py-2 rounded-lg text-sm text-sidebar-foreground/60 hover:bg-black/5 hover:text-sidebar-foreground transition-all"
+            className={cn(
+              "flex items-center gap-3 px-2 py-2 rounded-lg text-sm transition-all",
+              pathname === "/settings" || pathname.startsWith("/settings/")
+                ? "bg-amber-500/10 text-amber-600"
+                : "text-sidebar-foreground/60 hover:bg-black/5 hover:text-sidebar-foreground"
+            )}
           >
-            <Settings className="w-4.5 h-4.5 shrink-0" />
+            <Settings
+              className={cn(
+                "w-4.5 h-4.5 shrink-0",
+                (pathname === "/settings" || pathname.startsWith("/settings/")) && "text-amber-600"
+              )}
+            />
             <AnimatePresence>
               {!collapsed && (
                 <motion.span initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>

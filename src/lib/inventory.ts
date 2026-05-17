@@ -213,6 +213,103 @@ export async function getEquipmentById(id: string): Promise<EquipmentWithUnits |
 }
 
 // ──────────────────────────────────────────────────────────────────
+// Disponibilidade por data (controle de overbooking entre OS)
+// ──────────────────────────────────────────────────────────────────
+
+export interface EquipmentAvailability {
+  total: number;          // capacidade total descontando manutenção/inativo
+  allocated: number;      // soma já comprometida em outras OS no período
+  available: number;      // total - allocated (clamp >= 0)
+}
+
+/**
+ * Calcula disponibilidade efetiva de cada equipamento da organização para um
+ * período. Considera "ocupando estoque" eventos com status
+ *   planning ∪ ready_to_load ∪ in_field
+ * cujas datas se sobrepõem ao intervalo [startDate, endDate].
+ *
+ * `excludeEventId` permite ignorar a OS atual (para mostrar quanto OUTRAS OS
+ * já reservaram, deixando o cap real para a OS sendo editada).
+ *
+ * Sobreposição: A.start <= B.end AND A.end >= B.start.
+ */
+export async function getEquipmentAvailability(
+  organizationId: string,
+  startDate: string,
+  endDate: string,
+  excludeEventId?: string
+): Promise<Map<string, EquipmentAvailability>> {
+  const supabase = createSupabaseAdminClient();
+
+  // 1) Capacidade total por equipamento.
+  //    - serializado: count(equipment_units) com status NOT IN ('maintenance', 'inactive')
+  //    - bulk:        bulk_inventory.total_qty
+  const { data: equipRows, error: equipErr } = await supabase
+    .from("equipment")
+    .select(
+      `
+      id, type,
+      equipment_units (id, status),
+      bulk_inventory (total_qty)
+    `
+    )
+    .eq("organization_id", organizationId);
+  if (equipErr) throw equipErr;
+
+  // 2) Alocação somada em OS sobrepostas (excluindo a OS atual, se informada).
+  let allocQuery = supabase
+    .from("event_equipment")
+    .select(
+      `
+      equipment_id, qty,
+      events!inner (id, organization_id, status, start_date, end_date)
+    `
+    )
+    .eq("events.organization_id", organizationId)
+    .in("events.status", ["planning", "ready_to_load", "in_field"])
+    .lte("events.start_date", endDate)
+    .gte("events.end_date", startDate);
+
+  if (excludeEventId) {
+    allocQuery = allocQuery.neq("events.id", excludeEventId);
+  }
+
+  const { data: allocData, error: allocErr } = await allocQuery;
+  if (allocErr) throw allocErr;
+
+  const allocMap = new Map<string, number>();
+  for (const row of allocData ?? []) {
+    const prev = allocMap.get(row.equipment_id) ?? 0;
+    allocMap.set(row.equipment_id, prev + (row.qty ?? 0));
+  }
+
+  const result = new Map<string, EquipmentAvailability>();
+  for (const eq of equipRows ?? []) {
+    let total = 0;
+    if (eq.type === "serialized") {
+      const units =
+        (eq.equipment_units as unknown as { id: string; status: string }[]) ?? [];
+      total = units.filter(
+        (u) => u.status !== "maintenance" && u.status !== "inactive"
+      ).length;
+    } else {
+      const bulk =
+        (eq.bulk_inventory as unknown as { total_qty: number }[] | null)?.[0] ??
+        null;
+      total = bulk?.total_qty ?? 0;
+    }
+    const allocated = allocMap.get(eq.id) ?? 0;
+    result.set(eq.id, {
+      total,
+      allocated,
+      available: Math.max(0, total - allocated),
+    });
+  }
+
+  return result;
+}
+
+// ──────────────────────────────────────────────────────────────────
 // Helpers de formatação
 // ──────────────────────────────────────────────────────────────────
 

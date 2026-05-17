@@ -33,8 +33,8 @@ export default async function CheckinPage({ searchParams }: CheckinPageProps) {
 
   const canWrite = ["super_admin", "admin", "operations", "warehouse"].includes(context?.role ?? "");
 
-  // Only show items that went out (confirmed during checkout)
-  const fieldItems = event.equipment.filter((i) => i.confirmed);
+  // Only show items that went out (loaded during checkout)
+  const fieldItems = event.equipment.filter((i) => i.loaded);
   const total = fieldItems.length;
 
   // Bulk items (no unitId) don't have per-unit tracking — count as pending until event finalized

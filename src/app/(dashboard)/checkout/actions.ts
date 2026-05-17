@@ -10,14 +10,16 @@ async function requireWriteRole() {
   const context = await getCurrentUserContext();
   const writeRoles = ["super_admin", "admin", "operations", "warehouse"];
   if (!writeRoles.includes(context?.role ?? "")) redirect("/dashboard?error=unauthorized");
+  return context;
 }
 
 export async function confirmCheckoutItem(formData: FormData) {
-  await requireWriteRole();
+  const context = await requireWriteRole();
 
   const eventEquipmentId = String(formData.get("eventEquipmentId") ?? "").trim();
   const eventId = String(formData.get("eventId") ?? "").trim();
-  const confirmed = formData.get("confirmed") === "true";
+  // Manteve o name "confirmed" no FormData por compat com a UI; semântica = loaded.
+  const loaded = formData.get("confirmed") === "true";
 
   if (!eventEquipmentId || !eventId) redirect(`/checkout?eventId=${eventId}&error=Dados inválidos.`);
 
@@ -25,25 +27,38 @@ export async function confirmCheckoutItem(formData: FormData) {
 
   const { data: item, error: fetchErr } = await supabase
     .from("event_equipment")
-    .select("unit_id")
+    .select("unit_id, separated")
     .eq("id", eventEquipmentId)
     .maybeSingle();
 
   if (fetchErr || !item) redirect(`/checkout?eventId=${eventId}&error=Item não encontrado.`);
 
+  const nowIso = new Date().toISOString();
+  // Carregar implica separado. Se ainda não estava separado, marca também.
+  const update: Record<string, unknown> = {
+    loaded,
+    loaded_at: loaded ? nowIso : null,
+    loaded_by: loaded ? context?.userId ?? null : null,
+  };
+  if (loaded && !item.separated) {
+    update.separated = true;
+    update.separated_at = nowIso;
+    update.separated_by = context?.userId ?? null;
+  }
+
   const { error } = await supabase
     .from("event_equipment")
-    .update({ confirmed })
+    .update(update)
     .eq("id", eventEquipmentId);
 
   if (error) redirect(`/checkout?eventId=${eventId}&error=${encodeURIComponent(error.message)}`);
 
-  if (item.unit_id && confirmed) {
+  if (item.unit_id && loaded) {
     await supabase
       .from("equipment_units")
       .update({ status: "in_field" })
       .eq("id", item.unit_id);
-  } else if (item.unit_id && !confirmed) {
+  } else if (item.unit_id && !loaded) {
     await supabase
       .from("equipment_units")
       .update({ status: "available" })

@@ -10,6 +10,11 @@ import {
   Lock,
   Package,
   CornerDownLeft,
+  Lightbulb,
+  Building2,
+  CalendarDays,
+  AlertTriangle,
+  FileText,
 } from "lucide-react";
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -18,15 +23,18 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import { SubmitButton } from "@/components/ui/SubmitButton";
 import { DeleteConfirmDialog } from "@/components/ui/delete-confirm-dialog";
 import { getEventById, getGateProgress, isChecklistComplete } from "@/lib/events";
-import { listEquipment } from "@/lib/inventory";
+import { listEquipment, getEquipmentAvailability } from "@/lib/inventory";
+import { listClientOrganizations } from "@/lib/clients";
 import { getCurrentUserContext } from "@/lib/auth/session";
 import {
   toggleChecklistItem,
   promoteToReadyToLoad,
   removeEquipmentFromEvent,
+  toggleEquipmentSeparated,
 } from "@/app/(dashboard)/events/actions";
 
 import { AddEquipmentSheet } from "@/app/(dashboard)/events/[id]/AddEquipmentSheet";
+import { EditEventDetailsSheet } from "@/app/(dashboard)/events/[id]/EditEventDetailsSheet";
 
 interface EventDetailPageProps {
   params: Promise<{ id: string }>;
@@ -37,9 +45,10 @@ export default async function EventDetailPage({ params, searchParams }: EventDet
   const { id } = await params;
   const { success, error: errorMsg } = await searchParams;
 
-  const [event, context] = await Promise.all([
+  const [event, context, clients] = await Promise.all([
     getEventById(id),
     getCurrentUserContext(),
+    listClientOrganizations(),
   ]);
 
   if (!event) notFound();
@@ -57,9 +66,17 @@ export default async function EventDetailPage({ params, searchParams }: EventDet
   const canEditEquipment = canPromote && isReadyToLoad;
 
   const organizationId = context?.primaryOrganization?.id;
-  const allEquipment = canEditEquipment && organizationId
-    ? await listEquipment(organizationId)
-    : [];
+  const [allEquipment, availabilityMap] = canEditEquipment && organizationId
+    ? await Promise.all([
+        listEquipment(organizationId),
+        getEquipmentAvailability(
+          organizationId,
+          event.startDate,
+          event.endDate,
+          event.id
+        ),
+      ])
+    : [[], new Map()];
 
   return (
     <div className="max-w-5xl space-y-6">
@@ -118,9 +135,11 @@ export default async function EventDetailPage({ params, searchParams }: EventDet
           )}
         </div>
 
-        {/* Gate widget */}
+        {/* Right column: edit + gate widget */}
+        <div className="flex w-full shrink-0 flex-col gap-2 md:w-60">
+        {canPromote && <EditEventDetailsSheet event={event} clients={clients} />}
         <div
-          className={`w-full shrink-0 rounded-xl border p-4 md:w-60 ${
+          className={`w-full shrink-0 rounded-xl border p-4 ${
             isReadyToLoad
               ? "border-emerald-500/30 bg-emerald-500/5"
               : gateProgress === 100
@@ -166,6 +185,7 @@ export default async function EventDetailPage({ params, searchParams }: EventDet
               />
             </form>
           )}
+        </div>
         </div>
       </div>
 
@@ -226,6 +246,8 @@ export default async function EventDetailPage({ params, searchParams }: EventDet
               <p className="text-sm">{event.clientName}</p>
             </div>
           )}
+
+          <OperationalInfoCard event={event} />
         </TabsContent>
 
         {/* ── TAB: Checklist Estratégico ── */}
@@ -333,7 +355,7 @@ export default async function EventDetailPage({ params, searchParams }: EventDet
                     </div>
                   )}
                   <div className="overflow-x-auto rounded-xl border border-border bg-card">
-                    <table className="min-w-[640px] w-full text-sm">
+                    <table className="min-w-[720px] w-full text-sm">
                       <thead>
                         <tr className="border-b border-border">
                           <th className="px-5 py-3 text-left text-xs font-semibold uppercase text-muted-foreground">
@@ -342,8 +364,11 @@ export default async function EventDetailPage({ params, searchParams }: EventDet
                           <th className="hidden px-4 py-3 text-left text-xs font-semibold uppercase text-muted-foreground md:table-cell">
                             Serial / Qtd
                           </th>
-                          <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-muted-foreground">
-                            Confirmado
+                          <th className="px-3 py-3 text-center text-xs font-semibold uppercase text-muted-foreground">
+                            Separado
+                          </th>
+                          <th className="px-3 py-3 text-center text-xs font-semibold uppercase text-muted-foreground">
+                            Carregado
                           </th>
                           {canEditEquipment && <th className="w-10 px-4 py-3" />}
                         </tr>
@@ -355,16 +380,69 @@ export default async function EventDetailPage({ params, searchParams }: EventDet
                             <td className="hidden px-4 py-3.5 font-mono text-xs text-muted-foreground md:table-cell">
                               {eq.unitSerial ?? `${eq.qty} un`}
                             </td>
-                            <td className="px-4 py-3.5">
-                              {eq.confirmed ? (
-                                <span className="flex items-center gap-1 text-xs font-semibold text-emerald-600">
-                                  <CheckCircle2 className="h-3.5 w-3.5" /> Sim
-                                </span>
-                              ) : (
-                                <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                                  <Clock className="h-3.5 w-3.5" /> Pendente
-                                </span>
-                              )}
+                            <td className="px-3 py-3.5">
+                              <div className="flex justify-center">
+                                {canManageChecklist ? (
+                                  <form action={toggleEquipmentSeparated}>
+                                    <input type="hidden" name="eventEquipmentId" value={eq.id} />
+                                    <input type="hidden" name="eventId" value={event.id} />
+                                    <input
+                                      type="hidden"
+                                      name="separated"
+                                      value={eq.separated ? "false" : "true"}
+                                    />
+                                    <button
+                                      type="submit"
+                                      title={
+                                        eq.separated
+                                          ? "Marcar como NÃO separado"
+                                          : "Marcar como separado"
+                                      }
+                                      className={`flex h-6 w-6 items-center justify-center rounded-full border transition-all ${
+                                        eq.separated
+                                          ? "border-emerald-500/40 bg-emerald-500/20 hover:bg-emerald-500/30"
+                                          : "border-border bg-black/5 hover:border-amber-500/40 hover:bg-amber-500/10"
+                                      }`}
+                                    >
+                                      {eq.separated && (
+                                        <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                                      )}
+                                    </button>
+                                  </form>
+                                ) : (
+                                  <div
+                                    className={`flex h-6 w-6 items-center justify-center rounded-full border ${
+                                      eq.separated
+                                        ? "border-emerald-500/40 bg-emerald-500/20"
+                                        : "border-border bg-black/5"
+                                    }`}
+                                  >
+                                    {eq.separated && (
+                                      <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            </td>
+                            <td className="px-3 py-3.5">
+                              <div className="flex justify-center">
+                                <div
+                                  className={`flex h-6 w-6 items-center justify-center rounded-full border ${
+                                    eq.loaded
+                                      ? "border-emerald-500/40 bg-emerald-500/20"
+                                      : "border-border bg-black/5"
+                                  }`}
+                                  title={
+                                    eq.loaded
+                                      ? "Carregado no checkout"
+                                      : "Aguardando checkout"
+                                  }
+                                >
+                                  {eq.loaded && (
+                                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                                  )}
+                                </div>
+                              </div>
                             </td>
                             {canEditEquipment && (
                               <td className="px-4 py-3.5">
@@ -418,11 +496,27 @@ export default async function EventDetailPage({ params, searchParams }: EventDet
                   {canEditEquipment && (
                     <AddEquipmentSheet
                       eventId={event.id}
-                      equipment={allEquipment.map((e) => ({
-                        id: e.id,
-                        name: e.name,
-                        type: e.type,
-                      }))}
+                      eventStatus={event.status}
+                      equipment={allEquipment.map((e) => {
+                        const av = availabilityMap.get(e.id);
+                        return {
+                          id: e.id,
+                          name: e.name,
+                          type: e.type,
+                          categoryName: e.categoryName,
+                          total: av?.total ?? 0,
+                          allocatedByOthers: av?.allocated ?? 0,
+                          available: av?.available ?? 0,
+                        };
+                      })}
+                      currentQtyByEquipment={event.equipment.reduce<Record<string, number>>(
+                        (acc, item) => {
+                          if (item.unitId !== null) return acc;
+                          acc[item.equipmentId] = (acc[item.equipmentId] ?? 0) + item.qty;
+                          return acc;
+                        },
+                        {}
+                      )}
                     />
                   )}
                 </div>
@@ -451,6 +545,156 @@ export default async function EventDetailPage({ params, searchParams }: EventDet
           )}
         </TabsContent>
       </Tabs>
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────
+// Card: Informações operacionais (referência: OS impressa)
+// ──────────────────────────────────────────────────────────────────
+
+function formatDateTime(iso: string | null): string {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleString("pt-BR", {
+    dateStyle: "short",
+    timeStyle: "short",
+  });
+}
+
+function OperationalInfoCard({
+  event,
+}: {
+  event: Awaited<ReturnType<typeof getEventById>>;
+}) {
+  if (!event) return null;
+
+  const flags: { key: string; label: string; active: boolean; tone: "red" | "amber" | "blue" }[] = [
+    { key: "executivePresent", label: "Diretoria / CEO presente", active: event.executivePresent, tone: "red" },
+    { key: "strictVenueHours", label: "Horário rígido do venue", active: event.strictVenueHours, tone: "red" },
+    { key: "isLivestreamed", label: "Transmissão ao vivo", active: event.isLivestreamed, tone: "red" },
+    { key: "isRecorded", label: "Evento gravado", active: event.isRecorded, tone: "blue" },
+    { key: "clientDemanding", label: "Cliente exigente (estética)", active: event.clientDemanding, tone: "amber" },
+    { key: "agencyDetailed", label: "Agência detalhista", active: event.agencyDetailed, tone: "amber" },
+    { key: "previousDayAssembly", label: "Montagem na véspera", active: event.previousDayAssembly, tone: "blue" },
+    { key: "requiresAdvanceCredential", label: "Credenciamento antecipado", active: event.requiresAdvanceCredential, tone: "blue" },
+  ];
+  const activeFlags = flags.filter((f) => f.active);
+
+  const hasAny =
+    event.vehicle ||
+    event.lightingColor ||
+    event.assemblyAt ||
+    event.teardownAt ||
+    event.agencyName ||
+    event.notes ||
+    activeFlags.length > 0;
+
+  if (!hasAny) {
+    return (
+      <div className="mt-4 rounded-xl border border-dashed border-border bg-card p-4 text-center">
+        <p className="text-xs text-muted-foreground">
+          Nenhum detalhe operacional preenchido. Use <strong>Editar OS</strong> para adicionar
+          veículo, horários, agência e flags de risco.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-4 space-y-3 rounded-xl border border-border bg-card p-4">
+      <p className="flex items-center gap-1.5 text-sm font-semibold">
+        <Truck className="h-3.5 w-3.5" />
+        Informações operacionais
+      </p>
+
+      <dl className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
+        {event.vehicle && (
+          <KV icon={<Truck className="h-3 w-3" />} label="Veículo" value={event.vehicle} />
+        )}
+        {event.lightingColor && (
+          <KV
+            icon={<Lightbulb className="h-3 w-3" />}
+            label="Cor da iluminação"
+            value={event.lightingColor}
+          />
+        )}
+        {event.assemblyAt && (
+          <KV
+            icon={<CalendarDays className="h-3 w-3" />}
+            label="Montagem"
+            value={formatDateTime(event.assemblyAt)}
+          />
+        )}
+        {event.teardownAt && (
+          <KV
+            icon={<CalendarDays className="h-3 w-3" />}
+            label="Desmontagem"
+            value={formatDateTime(event.teardownAt)}
+          />
+        )}
+        {event.agencyName && (
+          <KV
+            icon={<Building2 className="h-3 w-3" />}
+            label="Agência"
+            value={event.agencyName}
+          />
+        )}
+      </dl>
+
+      {activeFlags.length > 0 && (
+        <div className="border-t border-border pt-3">
+          <p className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+            <AlertTriangle className="h-3 w-3" />
+            Pontos de atenção
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {activeFlags.map((f) => (
+              <span
+                key={f.key}
+                className={`rounded-full px-2.5 py-1 text-[11px] font-medium ${
+                  f.tone === "red"
+                    ? "bg-red-500/10 text-red-600"
+                    : f.tone === "amber"
+                    ? "bg-amber-500/10 text-amber-700"
+                    : "bg-blue-500/10 text-blue-600"
+                }`}
+              >
+                {f.label}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {event.notes && (
+        <div className="border-t border-border pt-3">
+          <p className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+            <FileText className="h-3 w-3" />
+            Observações
+          </p>
+          <p className="whitespace-pre-wrap text-sm text-foreground">{event.notes}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function KV({
+  icon,
+  label,
+  value,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: string;
+}) {
+  return (
+    <div>
+      <dt className="flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+        {icon}
+        {label}
+      </dt>
+      <dd className="mt-0.5 text-sm">{value}</dd>
     </div>
   );
 }

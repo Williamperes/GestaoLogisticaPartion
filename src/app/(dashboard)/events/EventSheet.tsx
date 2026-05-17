@@ -1,6 +1,17 @@
 "use client";
 
-import { Plus, CalendarDays, MapPin } from "lucide-react";
+import {
+  Plus,
+  CalendarDays,
+  MapPin,
+  ListChecks,
+  Truck,
+  Lightbulb,
+  Building2,
+  AlertTriangle,
+  FileText,
+} from "lucide-react";
+
 import {
   Sheet,
   SheetContent,
@@ -13,6 +24,7 @@ import { Button } from "@/components/ui/button";
 import { SubmitButton } from "@/components/ui/SubmitButton";
 import { createEvent } from "@/app/(dashboard)/events/actions";
 import type { ClientOrganization } from "@/lib/clients";
+import type { ChecklistTemplate } from "@/lib/checklist-templates";
 
 const INPUT_CLASS =
   "w-full rounded-2xl border border-border bg-background px-4 py-3 text-sm outline-none transition focus:border-primary/50 focus:ring-4 focus:ring-primary/10";
@@ -21,9 +33,11 @@ const LABEL_TEXT_CLASS = "text-sm font-medium text-foreground";
 
 interface EventSheetProps {
   clients: ClientOrganization[];
+  templates: ChecklistTemplate[];
 }
 
-export function EventSheet({ clients }: EventSheetProps) {
+export function EventSheet({ clients, templates }: EventSheetProps) {
+  const defaultTemplate = templates.find((t) => t.isDefault) ?? templates[0];
   return (
     <Sheet>
       <SheetTrigger
@@ -125,13 +139,152 @@ export function EventSheet({ clients }: EventSheetProps) {
               </div>
             </div>
 
-            {/* Nota sobre checklist */}
-            <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-4 py-3">
-              <p className="text-xs text-emerald-700">
-                ✓ O <strong>Checklist Estratégico</strong> padrão (5 itens) será criado automaticamente
-                e deverá ser concluído antes de liberar a carga.
-              </p>
-            </div>
+            {/* Detalhes operacionais (opcional, recolhível) */}
+            <details className="group rounded-xl border border-border bg-card/50">
+              <summary className="flex cursor-pointer items-center justify-between gap-2 px-4 py-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                <span className="flex items-center gap-2">
+                  <Truck className="h-3.5 w-3.5" />
+                  Detalhes operacionais (opcional)
+                </span>
+                <span className="text-[10px] text-muted-foreground/70 group-open:hidden">
+                  expandir
+                </span>
+                <span className="hidden text-[10px] text-muted-foreground/70 group-open:inline">
+                  recolher
+                </span>
+              </summary>
+              <div className="flex flex-col gap-4 border-t border-border px-4 py-4">
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <label className={LABEL_CLASS}>
+                    <span className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+                      <Truck className="h-3.5 w-3.5" />
+                      Veículo
+                    </span>
+                    <input
+                      name="vehicle"
+                      placeholder="Ex.: Kombi Ilmar"
+                      className={INPUT_CLASS}
+                    />
+                  </label>
+                  <label className={LABEL_CLASS}>
+                    <span className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+                      <Lightbulb className="h-3.5 w-3.5" />
+                      Cor da iluminação cênica
+                    </span>
+                    <input
+                      name="lightingColor"
+                      placeholder="Ex.: DMX, âmbar..."
+                      className={INPUT_CLASS}
+                    />
+                  </label>
+                </div>
+
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <label className={LABEL_CLASS}>
+                    <span className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+                      <CalendarDays className="h-3.5 w-3.5" />
+                      Montagem
+                    </span>
+                    <input
+                      name="assemblyAt"
+                      type="datetime-local"
+                      className={INPUT_CLASS}
+                    />
+                  </label>
+                  <label className={LABEL_CLASS}>
+                    <span className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+                      <CalendarDays className="h-3.5 w-3.5" />
+                      Desmontagem
+                    </span>
+                    <input
+                      name="teardownAt"
+                      type="datetime-local"
+                      className={INPUT_CLASS}
+                    />
+                  </label>
+                </div>
+
+                <label className={LABEL_CLASS}>
+                  <span className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+                    <Building2 className="h-3.5 w-3.5" />
+                    Agência envolvida
+                  </span>
+                  <input
+                    name="agencyName"
+                    placeholder="Nome da agência (deixe em branco se não houver)"
+                    className={INPUT_CLASS}
+                  />
+                </label>
+
+                <fieldset className="rounded-xl border border-border bg-background/40 p-3">
+                  <legend className="flex items-center gap-1.5 px-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    <AlertTriangle className="h-3.5 w-3.5" />
+                    Flags de risco / logística
+                  </legend>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <CheckLabel name="executivePresent" label="Diretoria / CEO presente" />
+                    <CheckLabel name="isRecorded" label="Evento gravado" />
+                    <CheckLabel name="isLivestreamed" label="Transmissão ao vivo" />
+                    <CheckLabel name="clientDemanding" label="Cliente exigente com estética" />
+                    <CheckLabel name="agencyDetailed" label="Agência muito detalhista" />
+                    <CheckLabel name="previousDayAssembly" label="Montagem na véspera" />
+                    <CheckLabel
+                      name="requiresAdvanceCredential"
+                      label="Credenciamento antecipado"
+                    />
+                    <CheckLabel
+                      name="strictVenueHours"
+                      label="Horário rígido (multa / corte de energia)"
+                    />
+                  </div>
+                </fieldset>
+
+                <label className={LABEL_CLASS}>
+                  <span className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+                    <FileText className="h-3.5 w-3.5" />
+                    Observações
+                  </span>
+                  <textarea
+                    name="notes"
+                    rows={3}
+                    placeholder="Notas livres sobre a OS..."
+                    className={`${INPUT_CLASS} resize-y`}
+                  />
+                </label>
+              </div>
+            </details>
+
+            {/* Template de checklist */}
+            <label className={LABEL_CLASS}>
+              <span className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+                <ListChecks className="h-3.5 w-3.5" />
+                Template de Checklist
+              </span>
+              {templates.length === 0 ? (
+                <>
+                  <input type="hidden" name="templateId" value="" />
+                  <p className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-xs text-amber-700">
+                    Nenhum template cadastrado. A OS será criada com o checklist mínimo embutido.
+                    Configure templates em <strong>Configurações → Templates de Checklist</strong>.
+                  </p>
+                </>
+              ) : (
+                <select
+                  name="templateId"
+                  defaultValue={defaultTemplate?.id ?? ""}
+                  className={INPUT_CLASS}
+                >
+                  <option value="">— Checklist mínimo embutido —</option>
+                  {templates.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                      {t.isDefault ? " · padrão" : ""} · {t.requiredCount} obrigatório
+                      {t.requiredCount === 1 ? "" : "s"}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </label>
           </div>
 
           <div className="mt-auto border-t border-border bg-background/60 px-6 py-4">
@@ -144,5 +297,18 @@ export function EventSheet({ clients }: EventSheetProps) {
         </form>
       </SheetContent>
     </Sheet>
+  );
+}
+
+function CheckLabel({ name, label }: { name: string; label: string }) {
+  return (
+    <label className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-sm transition-colors hover:bg-amber-500/5">
+      <input
+        type="checkbox"
+        name={name}
+        className="h-4 w-4 rounded border-border accent-amber-500"
+      />
+      <span>{label}</span>
+    </label>
   );
 }

@@ -1,4 +1,5 @@
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
+import type { ChecklistSection } from "@/lib/checklist-templates";
 
 // ──────────────────────────────────────────────────────────────────
 // Types
@@ -11,6 +12,9 @@ export interface EventChecklistItem {
   eventId: string;
   label: string;
   position: number;
+  section: ChecklistSection;
+  required: boolean;
+  templateItemId: string | null;
   done: boolean;
   doneAt: string | null;
   doneBy: string | null;
@@ -25,7 +29,12 @@ export interface EventEquipmentItem {
   unitSerial: string | null;
   unitStatus: string | null;
   qty: number;
-  confirmed: boolean;
+  separated: boolean;
+  separatedAt: string | null;
+  separatedBy: string | null;
+  loaded: boolean;
+  loadedAt: string | null;
+  loadedBy: string | null;
   notes: string | null;
 }
 
@@ -42,6 +51,21 @@ export interface Event {
   endDate: string;
   status: EventStatus;
   createdAt: string;
+  // Operational details
+  vehicle: string | null;
+  lightingColor: string | null;
+  assemblyAt: string | null;
+  teardownAt: string | null;
+  agencyName: string | null;
+  notes: string | null;
+  executivePresent: boolean;
+  isRecorded: boolean;
+  isLivestreamed: boolean;
+  clientDemanding: boolean;
+  agencyDetailed: boolean;
+  previousDayAssembly: boolean;
+  requiresAdvanceCredential: boolean;
+  strictVenueHours: boolean;
   // Summary counts
   checklistTotal?: number;
   checklistDone?: number;
@@ -54,15 +78,21 @@ export interface EventDetail extends Event {
 }
 
 // ──────────────────────────────────────────────────────────────────
-// Checklist padrão (template fixo)
+// Checklist padrão — usado quando organização não tem nenhum template
+// cadastrado e nenhum template é selecionado na criação da OS.
 // ──────────────────────────────────────────────────────────────────
 
-export const DEFAULT_CHECKLIST_ITEMS: { label: string; position: number }[] = [
-  { label: "Palestrantes / artistas confirmados", position: 0 },
-  { label: "Plano de palco aprovado pelo cliente", position: 1 },
-  { label: "Rider técnico revisado", position: 2 },
-  { label: "Logística de transporte definida", position: 3 },
-  { label: "Plano de contingência elaborado", position: 4 },
+export const DEFAULT_CHECKLIST_ITEMS: {
+  label: string;
+  position: number;
+  section: ChecklistSection;
+  required: boolean;
+}[] = [
+  { label: "Palestrantes / artistas confirmados", position: 0, section: "strategic", required: true },
+  { label: "Plano de palco aprovado pelo cliente", position: 1, section: "strategic", required: true },
+  { label: "Rider técnico revisado", position: 2, section: "strategic", required: true },
+  { label: "Logística de transporte definida", position: 3, section: "operational", required: true },
+  { label: "Plano de contingência elaborado", position: 4, section: "strategic", required: true },
 ];
 
 // ──────────────────────────────────────────────────────────────────
@@ -77,8 +107,12 @@ export async function listEvents(organizationId: string, search?: string): Promi
     .select(`
       id, organization_id, client_organization_id, name, venue, city,
       venue_notes, start_date, end_date, status, created_at,
+      vehicle, lighting_color, assembly_at, teardown_at, agency_name, notes,
+      executive_present, is_recorded, is_livestreamed, client_demanding,
+      agency_detailed, previous_day_assembly, requires_advance_credential,
+      strict_venue_hours,
       organizations!events_client_organization_id_fkey (name),
-      event_checklist_items (id, done),
+      event_checklist_items (id, done, required),
       event_equipment (id)
     `)
     .eq("organization_id", organizationId)
@@ -95,8 +129,10 @@ export async function listEvents(organizationId: string, search?: string): Promi
   return (
     data?.map((row) => {
       const clientOrg = row.organizations as unknown as { name: string } | null;
-      const checklist = (row.event_checklist_items as unknown as { id: string; done: boolean }[]) ?? [];
+      const checklist =
+        (row.event_checklist_items as unknown as { id: string; done: boolean; required: boolean }[]) ?? [];
       const equipment = (row.event_equipment as unknown as { id: string }[]) ?? [];
+      const requiredItems = checklist.filter((c) => c.required ?? true);
 
       return {
         id: row.id,
@@ -111,8 +147,22 @@ export async function listEvents(organizationId: string, search?: string): Promi
         endDate: row.end_date,
         status: row.status as EventStatus,
         createdAt: row.created_at,
-        checklistTotal: checklist.length,
-        checklistDone: checklist.filter((c) => c.done).length,
+        vehicle: row.vehicle,
+        lightingColor: row.lighting_color,
+        assemblyAt: row.assembly_at,
+        teardownAt: row.teardown_at,
+        agencyName: row.agency_name,
+        notes: row.notes,
+        executivePresent: row.executive_present,
+        isRecorded: row.is_recorded,
+        isLivestreamed: row.is_livestreamed,
+        clientDemanding: row.client_demanding,
+        agencyDetailed: row.agency_detailed,
+        previousDayAssembly: row.previous_day_assembly,
+        requiresAdvanceCredential: row.requires_advance_credential,
+        strictVenueHours: row.strict_venue_hours,
+        checklistTotal: requiredItems.length,
+        checklistDone: requiredItems.filter((c) => c.done).length,
         equipmentCount: equipment.length,
       };
     }) ?? []
@@ -127,10 +177,17 @@ export async function getEventById(id: string): Promise<EventDetail | null> {
     .select(`
       id, organization_id, client_organization_id, name, venue, city,
       venue_notes, start_date, end_date, status, created_at,
+      vehicle, lighting_color, assembly_at, teardown_at, agency_name, notes,
+      executive_present, is_recorded, is_livestreamed, client_demanding,
+      agency_detailed, previous_day_assembly, requires_advance_credential,
+      strict_venue_hours,
       organizations!events_client_organization_id_fkey (name),
-      event_checklist_items (id, event_id, label, position, done, done_at, done_by),
+      event_checklist_items (id, event_id, label, position, section, required, template_item_id, done, done_at, done_by),
       event_equipment (
-        id, event_id, equipment_id, unit_id, qty, confirmed, notes,
+        id, event_id, equipment_id, unit_id, qty,
+        separated, separated_at, separated_by,
+        loaded, loaded_at, loaded_by,
+        notes,
         equipment (id, name),
         equipment_units (id, serial, status)
       )
@@ -145,13 +202,17 @@ export async function getEventById(id: string): Promise<EventDetail | null> {
   const checklist = (
     data.event_checklist_items as unknown as {
       id: string; event_id: string; label: string; position: number;
+      section: ChecklistSection; required: boolean; template_item_id: string | null;
       done: boolean; done_at: string | null; done_by: string | null;
     }[]
   ) ?? [];
   const equipRows = (
     data.event_equipment as unknown as {
       id: string; event_id: string; equipment_id: string; unit_id: string | null;
-      qty: number; confirmed: boolean; notes: string | null;
+      qty: number;
+      separated: boolean; separated_at: string | null; separated_by: string | null;
+      loaded: boolean; loaded_at: string | null; loaded_by: string | null;
+      notes: string | null;
       equipment: { id: string; name: string };
       equipment_units: { id: string; serial: string; status: string } | null;
     }[]
@@ -170,6 +231,20 @@ export async function getEventById(id: string): Promise<EventDetail | null> {
     endDate: data.end_date,
     status: data.status as EventStatus,
     createdAt: data.created_at,
+    vehicle: data.vehicle,
+    lightingColor: data.lighting_color,
+    assemblyAt: data.assembly_at,
+    teardownAt: data.teardown_at,
+    agencyName: data.agency_name,
+    notes: data.notes,
+    executivePresent: data.executive_present,
+    isRecorded: data.is_recorded,
+    isLivestreamed: data.is_livestreamed,
+    clientDemanding: data.client_demanding,
+    agencyDetailed: data.agency_detailed,
+    previousDayAssembly: data.previous_day_assembly,
+    requiresAdvanceCredential: data.requires_advance_credential,
+    strictVenueHours: data.strict_venue_hours,
     checklistTotal: checklist.length,
     checklistDone: checklist.filter((c) => c.done).length,
     equipmentCount: equipRows.length,
@@ -181,6 +256,9 @@ export async function getEventById(id: string): Promise<EventDetail | null> {
         eventId: c.event_id,
         label: c.label,
         position: c.position,
+        section: c.section,
+        required: c.required,
+        templateItemId: c.template_item_id,
         done: c.done,
         doneAt: c.done_at,
         doneBy: c.done_by,
@@ -194,7 +272,12 @@ export async function getEventById(id: string): Promise<EventDetail | null> {
       unitSerial: e.equipment_units?.serial ?? null,
       unitStatus: e.equipment_units?.status ?? null,
       qty: e.qty,
-      confirmed: e.confirmed,
+      separated: e.separated,
+      separatedAt: e.separated_at,
+      separatedBy: e.separated_by,
+      loaded: e.loaded,
+      loadedAt: e.loaded_at,
+      loadedBy: e.loaded_by,
       notes: e.notes,
     })),
   };
@@ -204,13 +287,19 @@ export async function getEventById(id: string): Promise<EventDetail | null> {
 // Helpers de negócio
 // ──────────────────────────────────────────────────────────────────
 
-export function isChecklistComplete(items: Pick<EventChecklistItem, "done">[]): boolean {
-  return items.length > 0 && items.every((i) => i.done);
+// Gate considera apenas itens required = true.
+// Itens optional contam para o "progresso" mas não bloqueiam a promoção.
+type ChecklistGateItem = { done: boolean; required?: boolean };
+
+export function isChecklistComplete(items: ChecklistGateItem[]): boolean {
+  const required = items.filter((i) => i.required ?? true);
+  return required.length > 0 && required.every((i) => i.done);
 }
 
-export function getGateProgress(items: Pick<EventChecklistItem, "done">[]): number {
-  if (items.length === 0) return 0;
-  return Math.round((items.filter((i) => i.done).length / items.length) * 100);
+export function getGateProgress(items: ChecklistGateItem[]): number {
+  const required = items.filter((i) => i.required ?? true);
+  if (required.length === 0) return 0;
+  return Math.round((required.filter((i) => i.done).length / required.length) * 100);
 }
 
 export function formatEventStatus(status: EventStatus): string {
