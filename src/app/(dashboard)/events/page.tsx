@@ -1,109 +1,180 @@
-"use client";
-
-import { useState } from "react";
+import { Search, Plus } from "lucide-react";
 import Link from "next/link";
-import { ArrowUpRight, Plus, Search } from "lucide-react";
 import { StatusBadge } from "@/components/ui/StatusBadge";
-import { mockEvents, type EventStatus } from "@/lib/mock-data";
 import { Progress } from "@/components/ui/progress";
+import { EventSheet } from "@/app/(dashboard)/events/EventSheet";
+import { getCurrentUserContext } from "@/lib/auth/session";
+import { listEvents, formatEventStatus, getGateProgress } from "@/lib/events";
+import { listClientOrganizations } from "@/lib/clients";
+import { listChecklistTemplates } from "@/lib/checklist-templates";
+import type { EventStatus } from "@/lib/events";
 
-const statusFilters: { label: string; value: EventStatus | "all" }[] = [
+const STATUS_FILTERS: { label: string; value: EventStatus | "all" }[] = [
   { label: "Todos", value: "all" },
   { label: "Planejamento", value: "planning" },
-  { label: "Gate Liberado", value: "gate_open" },
+  { label: "Pronto p/ Carga", value: "ready_to_load" },
   { label: "Em Campo", value: "in_field" },
   { label: "Concluído", value: "completed" },
 ];
 
-export default function EventsPage() {
-  const [filter, setFilter] = useState<EventStatus | "all">("all");
+interface EventsPageProps {
+  searchParams: Promise<{ q?: string; status?: string }>;
+}
 
-  const filtered = filter === "all" ? mockEvents : mockEvents.filter((e) => e.status === filter);
+export default async function EventsPage({ searchParams }: EventsPageProps) {
+  const { q, status } = await searchParams;
+  const search = q?.trim() ?? "";
+  const statusFilter = (status ?? "all") as EventStatus | "all";
+
+  const context = await getCurrentUserContext();
+  const organizationId = context?.primaryOrganization?.id;
+
+  const [events, clients, templates] = organizationId
+    ? await Promise.all([
+        listEvents(organizationId, search),
+        listClientOrganizations(),
+        listChecklistTemplates(organizationId),
+      ])
+    : [[], [], []];
+
+  const filtered =
+    statusFilter === "all"
+      ? events
+      : events.filter((e) => e.status === statusFilter);
+
+  const canCreate = ["super_admin", "admin", "operations"].includes(context?.role ?? "");
 
   return (
     <div className="space-y-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Eventos & OS</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">{mockEvents.length} ordens de serviço</p>
+          <h1 className="text-2xl font-bold">Eventos &amp; OS</h1>
+          <p className="mt-0.5 text-sm text-muted-foreground">
+            {events.length} {events.length === 1 ? "ordem de serviço" : "ordens de serviço"}
+          </p>
         </div>
-        <button className="flex w-full items-center justify-center gap-2 rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-black transition-colors hover:bg-amber-400 sm:w-auto">
-          <Plus className="w-4 h-4" />
-          Nova OS
-        </button>
+        {canCreate && <EventSheet clients={clients} templates={templates} />}
       </div>
 
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+        {/* Filtros de status */}
         <div className="flex flex-wrap items-center gap-1 rounded-lg border border-border bg-card p-1">
-          {statusFilters.map((f) => (
-            <button
+          {STATUS_FILTERS.map((f) => (
+            <Link
               key={f.value}
-              onClick={() => setFilter(f.value)}
-              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
-                filter === f.value
+              href={`/events?status=${f.value}${search ? `&q=${encodeURIComponent(search)}` : ""}`}
+              className={`rounded-md px-3 py-1.5 text-xs font-medium transition-all ${
+                statusFilter === f.value
                   ? "bg-amber-500/15 text-amber-600"
                   : "text-muted-foreground hover:text-foreground"
               }`}
             >
               {f.label}
-            </button>
+            </Link>
           ))}
         </div>
-        <div className="flex w-full items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm text-muted-foreground lg:ml-auto lg:max-w-xs">
-          <Search className="w-3.5 h-3.5" />
-          <span>Buscar evento...</span>
-        </div>
+
+        {/* Busca */}
+        <form className="flex w-full items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm text-muted-foreground lg:ml-auto lg:max-w-xs">
+          <Search className="h-3.5 w-3.5" />
+          <input
+            name="q"
+            defaultValue={search}
+            placeholder="Buscar evento..."
+            className="flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
+          />
+          <input type="hidden" name="status" value={statusFilter} />
+        </form>
       </div>
 
-      <div className="overflow-x-auto rounded-xl border border-border bg-card">
-        <table className="min-w-[680px] w-full text-sm">
-          <thead>
-            <tr className="border-b border-border">
-              <th className="text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Evento</th>
-              <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide hidden md:table-cell">Cliente</th>
-              <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide hidden lg:table-cell">Data</th>
-              <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Gate</th>
-              <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Status</th>
-              <th className="px-4 py-3 w-10" />
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-border">
-            {filtered.map((event) => (
-              <tr key={event.id} className="group hover:bg-black/2 transition-colors">
-                <td className="px-5 py-4">
-                  <Link href={`/events/${event.id}`} className="group-hover:text-amber-600 transition-colors font-medium">
-                    {event.name}
-                  </Link>
-                  <p className="text-xs text-muted-foreground mt-0.5">{event.city}</p>
-                </td>
-                <td className="px-4 py-4 text-muted-foreground hidden md:table-cell">{event.client}</td>
-                <td className="px-4 py-4 text-muted-foreground hidden lg:table-cell">
-                  {new Date(event.startDate).toLocaleDateString("pt-BR")}
-                  {event.endDate !== event.startDate && (
-                    <> — {new Date(event.endDate).toLocaleDateString("pt-BR")}</>
-                  )}
-                </td>
-                <td className="px-4 py-4">
-                  <div className="flex items-center gap-2">
-                    <Progress value={event.gateProgress} className="w-16 h-1.5 bg-black/8" />
-                    <span className={`text-xs font-medium ${event.gateProgress === 100 ? "text-emerald-600" : "text-amber-600"}`}>
-                      {event.gateProgress}%
-                    </span>
-                  </div>
-                </td>
-                <td className="px-4 py-4">
-                  <StatusBadge status={event.status} type="event" />
-                </td>
-                <td className="px-4 py-4">
-                  <Link href={`/events/${event.id}`}>
-                    <ArrowUpRight className="w-4 h-4 text-muted-foreground/40 group-hover:text-amber-600 transition-colors" />
-                  </Link>
-                </td>
+      {filtered.length === 0 ? (
+        <div className="flex flex-col items-center justify-center rounded-xl border border-border bg-card py-16 text-center">
+          <Plus className="mb-3 h-8 w-8 text-muted-foreground/30" />
+          <p className="text-sm font-medium text-muted-foreground">
+            {search ? `Nenhum evento encontrado para "${search}"` : "Nenhuma OS cadastrada"}
+          </p>
+        </div>
+      ) : (
+        <div className="overflow-x-auto rounded-xl border border-border bg-card">
+          <table className="min-w-[680px] w-full text-sm">
+            <thead>
+              <tr className="border-b border-border">
+                <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Evento
+                </th>
+                <th className="hidden px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground md:table-cell">
+                  Cliente
+                </th>
+                <th className="hidden px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground lg:table-cell">
+                  Data
+                </th>
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Gate
+                </th>
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Status
+                </th>
+                <th className="w-10 px-4 py-3" />
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {filtered.map((event) => {
+                const progress = getGateProgress(
+                  Array.from({ length: event.checklistTotal ?? 0 }, (_, i) => ({
+                    done: i < (event.checklistDone ?? 0),
+                  }))
+                );
+                return (
+                  <tr key={event.id} className="group transition-colors hover:bg-black/2">
+                    <td className="px-5 py-4">
+                      <Link
+                        href={`/events/${event.id}`}
+                        className="font-medium transition-colors group-hover:text-amber-600"
+                      >
+                        {event.name}
+                      </Link>
+                      {event.city && (
+                        <p className="mt-0.5 text-xs text-muted-foreground">{event.city}</p>
+                      )}
+                    </td>
+                    <td className="hidden px-4 py-4 text-muted-foreground md:table-cell">
+                      {event.clientName ?? "—"}
+                    </td>
+                    <td className="hidden px-4 py-4 text-muted-foreground lg:table-cell">
+                      {new Date(event.startDate).toLocaleDateString("pt-BR")}
+                      {event.endDate !== event.startDate && (
+                        <> — {new Date(event.endDate).toLocaleDateString("pt-BR")}</>
+                      )}
+                    </td>
+                    <td className="px-4 py-4">
+                      <div className="flex items-center gap-2">
+                        <Progress value={progress} className="h-1.5 w-16 bg-black/8" />
+                        <span
+                          className={`text-xs font-medium ${
+                            progress === 100 ? "text-emerald-600" : "text-amber-600"
+                          }`}
+                        >
+                          {progress}%
+                        </span>
+                      </div>
+                    </td>
+                    <td className="px-4 py-4">
+                      <StatusBadge status={event.status} type="event" />
+                    </td>
+                    <td className="px-4 py-4">
+                      <Link href={`/events/${event.id}`}>
+                        <span className="text-xs text-muted-foreground/40 transition-colors group-hover:text-amber-600">
+                          →
+                        </span>
+                      </Link>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

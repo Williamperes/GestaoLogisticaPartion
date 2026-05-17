@@ -1,0 +1,693 @@
+"use server";
+
+import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
+import { createSupabaseAdminClient } from "@/lib/supabase/server";
+import { getCurrentUserContext } from "@/lib/auth/session";
+import { DEFAULT_CHECKLIST_ITEMS, isChecklistComplete } from "@/lib/events";
+import { getChecklistTemplate } from "@/lib/checklist-templates";
+import { getEquipmentAvailability } from "@/lib/inventory";
+
+const WRITE_ROLES = ["super_admin", "admin", "operations"] as const;
+const CHECKLIST_ROLES = ["super_admin", "admin", "operations", "warehouse"] as const;
+
+async function requireWriteRole() {
+  const context = await getCurrentUserContext();
+  if (!context?.role || !WRITE_ROLES.includes(context.role as (typeof WRITE_ROLES)[number])) {
+    redirect("/dashboard?error=unauthorized");
+  }
+  return context;
+}
+
+async function requireChecklistRole() {
+  const context = await getCurrentUserContext();
+  if (!context?.role || !CHECKLIST_ROLES.includes(context.role as (typeof CHECKLIST_ROLES)[number])) {
+    redirect("/dashboard?error=unauthorized");
+  }
+  return context;
+}
+
+// ──────────────────────────────────────────────────────────────────
+// createEvent
+// Cria evento e insere o checklist padrão automaticamente.
+// ──────────────────────────────────────────────────────────────────
+export async function createEvent(formData: FormData) {
+  const context = await requireWriteRole();
+
+  const organizationId = context.primaryOrganization?.id;
+  if (!organizationId) {
+    redirect("/dashboard?error=organization_not_found");
+  }
+
+  const name = String(formData.get("name") ?? "").trim();
+  const clientOrganizationId = String(formData.get("clientOrganizationId") ?? "").trim() || null;
+  const venue = String(formData.get("venue") ?? "").trim() || null;
+  const city = String(formData.get("city") ?? "").trim() || null;
+  const venueNotes = String(formData.get("venueNotes") ?? "").trim() || null;
+  const startDate = String(formData.get("startDate") ?? "").trim();
+  const endDate = String(formData.get("endDate") ?? "").trim() || startDate;
+  const templateId = String(formData.get("templateId") ?? "").trim() || null;
+
+  // Campos operacionais opcionais
+  const vehicle = String(formData.get("vehicle") ?? "").trim() || null;
+  const lightingColor = String(formData.get("lightingColor") ?? "").trim() || null;
+  const assemblyAt = String(formData.get("assemblyAt") ?? "").trim() || null;
+  const teardownAt = String(formData.get("teardownAt") ?? "").trim() || null;
+  const agencyName = String(formData.get("agencyName") ?? "").trim() || null;
+  const notes = String(formData.get("notes") ?? "").trim() || null;
+  const executivePresent = formData.get("executivePresent") === "on";
+  const isRecorded = formData.get("isRecorded") === "on";
+  const isLivestreamed = formData.get("isLivestreamed") === "on";
+  const clientDemanding = formData.get("clientDemanding") === "on";
+  const agencyDetailed = formData.get("agencyDetailed") === "on";
+  const previousDayAssembly = formData.get("previousDayAssembly") === "on";
+  const requiresAdvanceCredential = formData.get("requiresAdvanceCredential") === "on";
+  const strictVenueHours = formData.get("strictVenueHours") === "on";
+
+  if (!name || !startDate) {
+    redirect("/events?error=Nome e data de início são obrigatórios.");
+  }
+
+  // Resolve template (se informado) e valida que pertence à org
+  let templateItems: {
+    label: string;
+    position: number;
+    section: "strategic" | "commercial" | "operational";
+    required: boolean;
+    template_item_id: string | null;
+  }[] = [];
+
+  if (templateId) {
+    const template = await getChecklistTemplate(templateId);
+    if (!template || template.organizationId !== organizationId) {
+      redirect("/events?error=Template de checklist inválido.");
+    }
+    templateItems = (template.items ?? []).map((i) => ({
+      label: i.label,
+      position: i.position,
+      section: i.section,
+      required: i.required,
+      template_item_id: i.id,
+    }));
+  } else {
+    // Sem template selecionado: usa o checklist mínimo embutido para garantir
+    // que a OS já nasça com um gate funcional.
+    templateItems = DEFAULT_CHECKLIST_ITEMS.map((i) => ({
+      label: i.label,
+      position: i.position,
+      section: i.section,
+      required: i.required,
+      template_item_id: null,
+    }));
+  }
+
+  const supabase = createSupabaseAdminClient();
+
+  const { data: event, error: eventError } = await supabase
+    .from("events")
+    .insert({
+      organization_id: organizationId,
+      client_organization_id: clientOrganizationId,
+      name,
+      venue,
+      city,
+      venue_notes: venueNotes,
+      start_date: startDate,
+      end_date: endDate,
+      vehicle,
+      lighting_color: lightingColor,
+      assembly_at: assemblyAt,
+      teardown_at: teardownAt,
+      agency_name: agencyName,
+      notes,
+      executive_present: executivePresent,
+      is_recorded: isRecorded,
+      is_livestreamed: isLivestreamed,
+      client_demanding: clientDemanding,
+      agency_detailed: agencyDetailed,
+      previous_day_assembly: previousDayAssembly,
+      requires_advance_credential: requiresAdvanceCredential,
+      strict_venue_hours: strictVenueHours,
+      created_by: context.userId,
+    })
+    .select("id")
+    .single();
+
+  if (eventError) {
+    redirect(`/events?error=${encodeURIComponent(eventError.message)}`);
+  }
+
+  if (templateItems.length > 0) {
+    const checklistRows = templateItems.map((item) => ({
+      event_id: event.id,
+      label: item.label,
+      position: item.position,
+      section: item.section,
+      required: item.required,
+      template_item_id: item.template_item_id,
+      done: false,
+    }));
+
+    const { error: checklistError } = await supabase
+      .from("event_checklist_items")
+      .insert(checklistRows);
+
+    if (checklistError) {
+      // Rollback do evento
+      await supabase.from("events").delete().eq("id", event.id);
+      redirect(`/events?error=${encodeURIComponent(checklistError.message)}`);
+    }
+  }
+
+  revalidatePath("/events");
+  redirect(`/events/${event.id}?success=Evento criado.`);
+}
+
+// ──────────────────────────────────────────────────────────────────
+// toggleChecklistItem
+// Marca/desmarca um item do checklist estratégico.
+// ──────────────────────────────────────────────────────────────────
+export async function toggleChecklistItem(formData: FormData) {
+  const context = await requireChecklistRole();
+
+  const itemId = String(formData.get("itemId") ?? "").trim();
+  const eventId = String(formData.get("eventId") ?? "").trim();
+  const doneRaw = formData.get("done");
+  const done = doneRaw === "true" || doneRaw === "1";
+
+  if (!itemId || !eventId) {
+    redirect(`/events/${eventId}?error=Item inválido.`);
+  }
+
+  const supabase = createSupabaseAdminClient();
+
+  const { error } = await supabase
+    .from("event_checklist_items")
+    .update({
+      done,
+      done_at: done ? new Date().toISOString() : null,
+      done_by: done ? context.userId : null,
+    })
+    .eq("id", itemId)
+    .eq("event_id", eventId);
+
+  if (error) {
+    redirect(`/events/${eventId}?error=${encodeURIComponent(error.message)}`);
+  }
+
+  revalidatePath(`/events/${eventId}`);
+  revalidatePath("/events");
+}
+
+// ──────────────────────────────────────────────────────────────────
+// promoteToReadyToLoad
+// Tenta avançar o status do evento para 'ready_to_load'.
+// O trigger do banco bloqueia se o checklist estiver incompleto.
+// A validação aqui é uma camada adicional com mensagem amigável.
+// ──────────────────────────────────────────────────────────────────
+export async function promoteToReadyToLoad(formData: FormData) {
+  const context = await requireWriteRole();
+  const organizationId = context.primaryOrganization?.id;
+  if (!organizationId) {
+    redirect("/dashboard?error=organization_not_found");
+  }
+
+  const eventId = String(formData.get("eventId") ?? "").trim();
+  if (!eventId) redirect("/events?error=Evento inválido.");
+
+  const supabase = createSupabaseAdminClient();
+
+  // Validação na camada de aplicação: checklist obrigatório completo?
+  const { data: items, error: fetchError } = await supabase
+    .from("event_checklist_items")
+    .select("id, done, required")
+    .eq("event_id", eventId);
+
+  if (fetchError) {
+    redirect(`/events/${eventId}?error=${encodeURIComponent(fetchError.message)}`);
+  }
+
+  if (!items || items.length === 0) {
+    redirect(`/events/${eventId}?error=Este evento não possui checklist configurado.`);
+  }
+
+  if (!isChecklistComplete(items)) {
+    const pending = items.filter((i) => (i.required ?? true) && !i.done).length;
+    redirect(
+      `/events/${eventId}?error=${encodeURIComponent(
+        `Checklist incompleto: ${pending} item(s) obrigatório(s) pendente(s). Conclua todos para liberar a carga.`
+      )}`
+    );
+  }
+
+  // Validação de estoque: nenhuma OS pode ser promovida com overbooking.
+  const { data: eventRow, error: eventFetchErr } = await supabase
+    .from("events")
+    .select("organization_id, start_date, end_date")
+    .eq("id", eventId)
+    .maybeSingle();
+  if (eventFetchErr || !eventRow || eventRow.organization_id !== organizationId) {
+    redirect(`/events/${eventId}?error=Evento inválido.`);
+  }
+
+  const { data: equipRows, error: equipFetchErr } = await supabase
+    .from("event_equipment")
+    .select("equipment_id, qty, unit_id, equipment(name)")
+    .eq("event_id", eventId)
+    .is("unit_id", null);
+  if (equipFetchErr) {
+    redirect(`/events/${eventId}?error=${encodeURIComponent(equipFetchErr.message)}`);
+  }
+
+  const desiredByEquipment = new Map<string, { qty: number; name: string }>();
+  for (const r of equipRows ?? []) {
+    const equipmentRel = (r as unknown as { equipment: { name: string } | null }).equipment;
+    const name = equipmentRel?.name ?? "—";
+    const prev = desiredByEquipment.get(r.equipment_id) ?? { qty: 0, name };
+    desiredByEquipment.set(r.equipment_id, { qty: prev.qty + r.qty, name });
+  }
+
+  if (desiredByEquipment.size > 0) {
+    const availability = await getEquipmentAvailability(
+      organizationId,
+      eventRow.start_date,
+      eventRow.end_date,
+      eventId
+    );
+    const oversold: { name: string; qty: number; available: number }[] = [];
+    for (const [equipmentId, { qty, name }] of desiredByEquipment.entries()) {
+      const avail = availability.get(equipmentId)?.available ?? 0;
+      if (qty > avail) oversold.push({ name, qty, available: avail });
+    }
+    if (oversold.length > 0) {
+      const detail = oversold
+        .slice(0, 3)
+        .map((o) => `${o.name} (${o.qty}/${o.available})`)
+        .join(", ");
+      redirect(
+        `/events/${eventId}?error=${encodeURIComponent(
+          `Estoque insuficiente para ${oversold.length} item(s): ${detail}. Ajuste a lista antes de liberar para carga.`
+        )}`
+      );
+    }
+  }
+
+  // Atualização — o trigger do banco é a segunda barreira
+  const { error: updateError } = await supabase
+    .from("events")
+    .update({ status: "ready_to_load" })
+    .eq("id", eventId);
+
+  if (updateError) {
+    // Captura o erro específico do trigger (GATE_BLOCKED)
+    const isGateBlocked =
+      updateError.message?.includes("GATE_BLOCKED") ||
+      updateError.code === "P0001";
+
+    const message = isGateBlocked
+      ? "Checklist ainda incompleto. Conclua todos os itens antes de liberar a carga."
+      : updateError.message;
+
+    redirect(`/events/${eventId}?error=${encodeURIComponent(message)}`);
+  }
+
+  revalidatePath(`/events/${eventId}`);
+  revalidatePath("/events");
+  redirect(`/events/${eventId}?success=Evento liberado para carga!`);
+}
+
+// ──────────────────────────────────────────────────────────────────
+// addEquipmentToEvent
+// Vincula um equipamento (ou unidade) a um evento.
+// ──────────────────────────────────────────────────────────────────
+export async function addEquipmentToEvent(formData: FormData) {
+  await requireWriteRole();
+
+  const eventId = String(formData.get("eventId") ?? "").trim();
+  const equipmentId = String(formData.get("equipmentId") ?? "").trim();
+  const unitId = String(formData.get("unitId") ?? "").trim() || null;
+  const qtyRaw = parseInt(String(formData.get("qty") ?? "1"), 10);
+  const qty = isNaN(qtyRaw) || qtyRaw < 1 ? 1 : qtyRaw;
+
+  if (!eventId || !equipmentId) {
+    redirect(`/events/${eventId}?error=Dados inválidos.`);
+  }
+
+  const supabase = createSupabaseAdminClient();
+  const { error } = await supabase.from("event_equipment").insert({
+    event_id: eventId,
+    equipment_id: equipmentId,
+    unit_id: unitId,
+    qty,
+    loaded: false,
+  });
+
+  if (error) {
+    redirect(`/events/${eventId}?error=${encodeURIComponent(error.message)}`);
+  }
+
+  revalidatePath(`/events/${eventId}`);
+}
+
+// ──────────────────────────────────────────────────────────────────
+// setEventEquipmentBatch
+// Sincroniza a lista de equipamentos (bulk-style, unit_id IS NULL) de
+// um evento a partir de um FormData com pares qty_<equipmentId> = N.
+//   - qty > 0 e linha existe  -> UPDATE
+//   - qty > 0 e linha ausente -> INSERT
+//   - qty = 0 e linha existe  -> DELETE
+//   - linhas com unit_id preenchido permanecem intocadas
+// ──────────────────────────────────────────────────────────────────
+export async function setEventEquipmentBatch(formData: FormData) {
+  const context = await requireWriteRole();
+  const organizationId = context.primaryOrganization?.id;
+  if (!organizationId) {
+    redirect("/dashboard?error=organization_not_found");
+  }
+
+  const eventId = String(formData.get("eventId") ?? "").trim();
+  if (!eventId) redirect("/events?error=Evento inválido.");
+
+  // Extrai pares (equipmentId -> qty) do FormData
+  const desired = new Map<string, number>();
+  for (const [key, value] of formData.entries()) {
+    if (!key.startsWith("qty_")) continue;
+    const equipmentId = key.slice(4);
+    const qty = parseInt(String(value ?? "0"), 10);
+    if (isNaN(qty) || qty < 0) continue;
+    desired.set(equipmentId, qty);
+  }
+
+  if (desired.size === 0) {
+    revalidatePath(`/events/${eventId}`);
+    redirect(`/events/${eventId}?success=Nenhuma alteração.`);
+  }
+
+  const supabase = createSupabaseAdminClient();
+
+  // Confirma que o evento pertence à org do usuário
+  const { data: eventRow, error: eventErr } = await supabase
+    .from("events")
+    .select("id, organization_id, status, start_date, end_date")
+    .eq("id", eventId)
+    .maybeSingle();
+  if (eventErr || !eventRow || eventRow.organization_id !== organizationId) {
+    redirect(`/events/${eventId}?error=Evento inválido.`);
+  }
+
+  // Confirma que todos os equipamentos solicitados são da mesma org
+  const equipmentIds = Array.from(desired.keys());
+  const { data: equipRows, error: equipErr } = await supabase
+    .from("equipment")
+    .select("id, organization_id")
+    .in("id", equipmentIds);
+  if (equipErr) {
+    redirect(`/events/${eventId}?error=${encodeURIComponent(equipErr.message)}`);
+  }
+  const validIds = new Set(
+    (equipRows ?? [])
+      .filter((e) => e.organization_id === organizationId)
+      .map((e) => e.id)
+  );
+  if (validIds.size !== equipmentIds.length) {
+    redirect(`/events/${eventId}?error=Um ou mais equipamentos são inválidos.`);
+  }
+
+  // Carrega estado atual (somente linhas bulk-style, unit_id IS NULL)
+  const { data: currentRows, error: currentErr } = await supabase
+    .from("event_equipment")
+    .select("id, equipment_id, qty")
+    .eq("event_id", eventId)
+    .is("unit_id", null);
+  if (currentErr) {
+    redirect(`/events/${eventId}?error=${encodeURIComponent(currentErr.message)}`);
+  }
+
+  const currentByEquipment = new Map<string, { id: string; qty: number }>();
+  for (const r of currentRows ?? []) {
+    currentByEquipment.set(r.equipment_id, { id: r.id, qty: r.qty });
+  }
+
+  // Valida disponibilidade conforme o status do evento.
+  // - planning  : aceita overbooking (UI permite, gate impede promoção depois).
+  // - outros    : hard block.
+  const availability = await getEquipmentAvailability(
+    organizationId,
+    eventRow.start_date,
+    eventRow.end_date,
+    eventId
+  );
+
+  if (eventRow.status !== "planning") {
+    const oversold: { id: string; qty: number; available: number }[] = [];
+    for (const [equipmentId, qty] of desired.entries()) {
+      if (qty <= 0) continue;
+      const avail = availability.get(equipmentId)?.available ?? 0;
+      if (qty > avail) {
+        oversold.push({ id: equipmentId, qty, available: avail });
+      }
+    }
+    if (oversold.length > 0) {
+      const detail = oversold
+        .slice(0, 3)
+        .map((o) => `${o.qty}/${o.available}`)
+        .join(", ");
+      redirect(
+        `/events/${eventId}?error=${encodeURIComponent(
+          `Estoque insuficiente em ${oversold.length} item(s) (${detail}). Reduza as quantidades ou volte ao status Planejamento.`
+        )}`
+      );
+    }
+  }
+
+  const inserts: { event_id: string; equipment_id: string; qty: number; loaded: boolean }[] = [];
+  const updates: { id: string; qty: number }[] = [];
+  const deletes: string[] = [];
+
+  for (const [equipmentId, qty] of desired.entries()) {
+    const existing = currentByEquipment.get(equipmentId);
+    if (qty <= 0) {
+      if (existing) deletes.push(existing.id);
+      continue;
+    }
+    if (!existing) {
+      inserts.push({
+        event_id: eventId,
+        equipment_id: equipmentId,
+        qty,
+        loaded: false,
+      });
+    } else if (existing.qty !== qty) {
+      updates.push({ id: existing.id, qty });
+    }
+  }
+
+  if (inserts.length > 0) {
+    const { error } = await supabase.from("event_equipment").insert(inserts);
+    if (error) {
+      redirect(`/events/${eventId}?error=${encodeURIComponent(error.message)}`);
+    }
+  }
+
+  for (const u of updates) {
+    const { error } = await supabase
+      .from("event_equipment")
+      .update({ qty: u.qty })
+      .eq("id", u.id);
+    if (error) {
+      redirect(`/events/${eventId}?error=${encodeURIComponent(error.message)}`);
+    }
+  }
+
+  if (deletes.length > 0) {
+    const { error } = await supabase
+      .from("event_equipment")
+      .delete()
+      .in("id", deletes);
+    if (error) {
+      redirect(`/events/${eventId}?error=${encodeURIComponent(error.message)}`);
+    }
+  }
+
+  // Soft-warning quando em planejamento: avisa qualquer overbooking remanescente.
+  let warning = "";
+  if (eventRow.status === "planning") {
+    const oversold: { qty: number; available: number }[] = [];
+    for (const [equipmentId, qty] of desired.entries()) {
+      if (qty <= 0) continue;
+      const avail = availability.get(equipmentId)?.available ?? 0;
+      if (qty > avail) oversold.push({ qty, available: avail });
+    }
+    if (oversold.length > 0) {
+      warning = ` Atenção: ${oversold.length} item(s) acima do disponível — resolva antes de promover a OS.`;
+    }
+  }
+
+  revalidatePath(`/events/${eventId}`);
+  redirect(
+    `/events/${eventId}?success=${encodeURIComponent(
+      `Lista de equipamentos atualizada.${warning}`
+    )}`
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────
+// toggleEquipmentSeparated
+// Marca/desmarca um item como SEPARADO (primeira conferência —
+// almoxarifado tirou da prateleira). Não altera o estado loaded.
+// ──────────────────────────────────────────────────────────────────
+export async function toggleEquipmentSeparated(formData: FormData) {
+  const context = await requireChecklistRole();
+
+  const eventEquipmentId = String(formData.get("eventEquipmentId") ?? "").trim();
+  const eventId = String(formData.get("eventId") ?? "").trim();
+  const separated =
+    formData.get("separated") === "true" || formData.get("separated") === "1";
+
+  if (!eventEquipmentId || !eventId) {
+    redirect(`/events/${eventId}?error=Item inválido.`);
+  }
+
+  const supabase = createSupabaseAdminClient();
+
+  const { error } = await supabase
+    .from("event_equipment")
+    .update({
+      separated,
+      separated_at: separated ? new Date().toISOString() : null,
+      separated_by: separated ? context.userId : null,
+    })
+    .eq("id", eventEquipmentId)
+    .eq("event_id", eventId);
+
+  if (error) {
+    redirect(`/events/${eventId}?error=${encodeURIComponent(error.message)}`);
+  }
+
+  revalidatePath(`/events/${eventId}`);
+}
+
+// ──────────────────────────────────────────────────────────────────
+// removeEquipmentFromEvent
+// Remove um equipamento vinculado a um evento.
+// ──────────────────────────────────────────────────────────────────
+export async function removeEquipmentFromEvent(formData: FormData) {
+  await requireWriteRole();
+
+  const eventEquipmentId = String(formData.get("eventEquipmentId") ?? "").trim();
+  if (!eventEquipmentId) redirect("/events?error=Dados inválidos.");
+
+  const supabase = createSupabaseAdminClient();
+
+  const { data: row } = await supabase
+    .from("event_equipment")
+    .select("event_id")
+    .eq("id", eventEquipmentId)
+    .maybeSingle();
+
+  const eventId = row?.event_id ?? "";
+
+  const { error } = await supabase
+    .from("event_equipment")
+    .delete()
+    .eq("id", eventEquipmentId);
+
+  if (error) redirect(`/events/${eventId}?error=${encodeURIComponent(error.message)}`);
+
+  revalidatePath(`/events/${eventId}`);
+}
+
+// ──────────────────────────────────────────────────────────────────
+// updateEventDetails
+// Atualiza campos básicos + operacionais da OS (sem mexer em status,
+// checklist ou equipamentos). Usado pelo card "Detalhes operacionais"
+// no detalhe do evento.
+// ──────────────────────────────────────────────────────────────────
+export async function updateEventDetails(formData: FormData) {
+  const context = await requireWriteRole();
+  const organizationId = context.primaryOrganization?.id;
+  if (!organizationId) {
+    redirect("/dashboard?error=organization_not_found");
+  }
+
+  const eventId = String(formData.get("eventId") ?? "").trim();
+  if (!eventId) redirect("/events?error=Evento inválido.");
+
+  const name = String(formData.get("name") ?? "").trim();
+  if (!name) {
+    redirect(`/events/${eventId}?error=${encodeURIComponent("Nome é obrigatório.")}`);
+  }
+
+  const clientOrganizationId = String(formData.get("clientOrganizationId") ?? "").trim() || null;
+  const venue = String(formData.get("venue") ?? "").trim() || null;
+  const city = String(formData.get("city") ?? "").trim() || null;
+  const venueNotes = String(formData.get("venueNotes") ?? "").trim() || null;
+  const startDate = String(formData.get("startDate") ?? "").trim();
+  const endDate = String(formData.get("endDate") ?? "").trim() || startDate;
+
+  const vehicle = String(formData.get("vehicle") ?? "").trim() || null;
+  const lightingColor = String(formData.get("lightingColor") ?? "").trim() || null;
+  const assemblyAt = String(formData.get("assemblyAt") ?? "").trim() || null;
+  const teardownAt = String(formData.get("teardownAt") ?? "").trim() || null;
+  const agencyName = String(formData.get("agencyName") ?? "").trim() || null;
+  const notes = String(formData.get("notes") ?? "").trim() || null;
+  const executivePresent = formData.get("executivePresent") === "on";
+  const isRecorded = formData.get("isRecorded") === "on";
+  const isLivestreamed = formData.get("isLivestreamed") === "on";
+  const clientDemanding = formData.get("clientDemanding") === "on";
+  const agencyDetailed = formData.get("agencyDetailed") === "on";
+  const previousDayAssembly = formData.get("previousDayAssembly") === "on";
+  const requiresAdvanceCredential = formData.get("requiresAdvanceCredential") === "on";
+  const strictVenueHours = formData.get("strictVenueHours") === "on";
+
+  if (!startDate) {
+    redirect(`/events/${eventId}?error=${encodeURIComponent("Data de início é obrigatória.")}`);
+  }
+
+  const supabase = createSupabaseAdminClient();
+
+  // Confirma que a OS pertence à org do usuário
+  const { data: existing, error: fetchErr } = await supabase
+    .from("events")
+    .select("organization_id")
+    .eq("id", eventId)
+    .maybeSingle();
+  if (fetchErr || !existing || existing.organization_id !== organizationId) {
+    redirect(`/events/${eventId}?error=Evento inválido.`);
+  }
+
+  const { error } = await supabase
+    .from("events")
+    .update({
+      name,
+      client_organization_id: clientOrganizationId,
+      venue,
+      city,
+      venue_notes: venueNotes,
+      start_date: startDate,
+      end_date: endDate,
+      vehicle,
+      lighting_color: lightingColor,
+      assembly_at: assemblyAt,
+      teardown_at: teardownAt,
+      agency_name: agencyName,
+      notes,
+      executive_present: executivePresent,
+      is_recorded: isRecorded,
+      is_livestreamed: isLivestreamed,
+      client_demanding: clientDemanding,
+      agency_detailed: agencyDetailed,
+      previous_day_assembly: previousDayAssembly,
+      requires_advance_credential: requiresAdvanceCredential,
+      strict_venue_hours: strictVenueHours,
+    })
+    .eq("id", eventId);
+
+  if (error) {
+    redirect(`/events/${eventId}?error=${encodeURIComponent(error.message)}`);
+  }
+
+  revalidatePath(`/events/${eventId}`);
+  revalidatePath("/events");
+  redirect(`/events/${eventId}?success=Detalhes atualizados.`);
+}
