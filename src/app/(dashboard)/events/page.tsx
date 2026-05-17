@@ -7,6 +7,7 @@ import { getCurrentUserContext } from "@/lib/auth/session";
 import { listEvents, formatEventStatus, getGateProgress } from "@/lib/events";
 import { listClientOrganizations } from "@/lib/clients";
 import { listChecklistTemplates } from "@/lib/checklist-templates";
+import { formatDateBR } from "@/lib/dates";
 import type { EventStatus } from "@/lib/events";
 
 const STATUS_FILTERS: { label: string; value: EventStatus | "all" }[] = [
@@ -141,9 +142,9 @@ export default async function EventsPage({ searchParams }: EventsPageProps) {
                       {event.clientName ?? "—"}
                     </td>
                     <td className="hidden px-4 py-4 text-muted-foreground lg:table-cell">
-                      {new Date(event.startDate).toLocaleDateString("pt-BR")}
+                      {formatDateBR(event.startDate)}
                       {event.endDate !== event.startDate && (
-                        <> — {new Date(event.endDate).toLocaleDateString("pt-BR")}</>
+                        <> — {formatDateBR(event.endDate)}</>
                       )}
                     </td>
                     <td className="px-4 py-4">

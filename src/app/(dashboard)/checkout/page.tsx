@@ -8,6 +8,7 @@ import {
 
 import { getEventById } from "@/lib/events";
 import { getCurrentUserContext } from "@/lib/auth/session";
+import { formatDateBR } from "@/lib/dates";
 import { Progress } from "@/components/ui/progress";
 
 import { confirmCheckoutItem, finalizeCheckout } from "@/app/(dashboard)/checkout/actions";
@@ -49,7 +50,7 @@ export default async function CheckoutPage({ searchParams }: CheckoutPageProps) 
         </div>
         <h1 className="text-xl font-bold">{event.name}</h1>
         <p className="mt-0.5 text-sm text-muted-foreground">
-          {event.clientName ?? "—"} • {new Date(event.startDate).toLocaleDateString("pt-BR")}
+          {event.clientName ?? "—"} • {formatDateBR(event.startDate)}
         </p>
       </div>
 

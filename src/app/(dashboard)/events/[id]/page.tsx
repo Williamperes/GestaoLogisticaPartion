@@ -25,7 +25,10 @@ import { DeleteConfirmDialog } from "@/components/ui/delete-confirm-dialog";
 import { getEventById, getGateProgress, isChecklistComplete } from "@/lib/events";
 import { listEquipment, getEquipmentAvailability } from "@/lib/inventory";
 import { listClientOrganizations } from "@/lib/clients";
+import { listEventDates } from "@/lib/event-dates.server";
+import { listTeamMembers } from "@/lib/team";
 import { getCurrentUserContext } from "@/lib/auth/session";
+import { formatDateBR } from "@/lib/dates";
 import {
   toggleChecklistItem,
   promoteToReadyToLoad,
@@ -35,6 +38,7 @@ import {
 
 import { AddEquipmentSheet } from "@/app/(dashboard)/events/[id]/AddEquipmentSheet";
 import { EditEventDetailsSheet } from "@/app/(dashboard)/events/[id]/EditEventDetailsSheet";
+import { EventDatesPanel } from "@/app/(dashboard)/events/[id]/EventDatesPanel";
 
 interface EventDetailPageProps {
   params: Promise<{ id: string }>;
@@ -45,13 +49,22 @@ export default async function EventDetailPage({ params, searchParams }: EventDet
   const { id } = await params;
   const { success, error: errorMsg } = await searchParams;
 
-  const [event, context, clients] = await Promise.all([
+  const [event, context, clients, eventDates] = await Promise.all([
     getEventById(id),
     getCurrentUserContext(),
     listClientOrganizations(),
+    listEventDates(id),
   ]);
 
   if (!event) notFound();
+
+  const teamMembers = context?.primaryOrganization?.id
+    ? (await listTeamMembers(context.primaryOrganization.id)).map((tm) => ({
+        id: tm.id,
+        name: tm.name,
+        specialty: tm.specialtyName ?? null,
+      }))
+    : [];
 
   const checklistDone = event.checklist.filter((c) => c.done).length;
   const gateProgress = getGateProgress(event.checklist);
@@ -122,9 +135,9 @@ export default async function EventDetailPage({ params, searchParams }: EventDet
             )}
             <span className="flex items-center gap-1.5">
               <Clock className="h-3.5 w-3.5" />
-              {new Date(event.startDate).toLocaleDateString("pt-BR")}
+              {formatDateBR(event.startDate)}
               {event.endDate !== event.startDate &&
-                ` — ${new Date(event.endDate).toLocaleDateString("pt-BR")}`}
+                ` — ${formatDateBR(event.endDate)}`}
             </span>
           </div>
           {event.venueNotes && (
@@ -192,6 +205,12 @@ export default async function EventDetailPage({ params, searchParams }: EventDet
       <Tabs defaultValue="checklist">
         <TabsList className="max-w-full overflow-x-auto border border-border bg-card">
           <TabsTrigger value="overview">Visão Geral</TabsTrigger>
+          <TabsTrigger value="dates">
+            Datas &amp; Escala
+            <span className="ml-1.5 rounded-full bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-bold text-amber-600">
+              {eventDates.length}
+            </span>
+          </TabsTrigger>
           <TabsTrigger value="checklist">
             Checklist
             {!checklistComplete && (
@@ -248,6 +267,16 @@ export default async function EventDetailPage({ params, searchParams }: EventDet
           )}
 
           <OperationalInfoCard event={event} />
+        </TabsContent>
+
+        {/* ── TAB: Datas & Escala ── */}
+        <TabsContent value="dates" className="mt-4">
+          <EventDatesPanel
+            eventId={event.id}
+            dates={eventDates}
+            teamMembers={teamMembers}
+            canEdit={canPromote}
+          />
         </TabsContent>
 
         {/* ── TAB: Checklist Estratégico ── */}

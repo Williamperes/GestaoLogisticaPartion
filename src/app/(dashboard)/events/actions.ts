@@ -691,3 +691,371 @@ export async function updateEventDetails(formData: FormData) {
   revalidatePath("/events");
   redirect(`/events/${eventId}?success=Detalhes atualizados.`);
 }
+
+// ──────────────────────────────────────────────────────────────────
+// Helpers de autorização para event_dates / team
+// ──────────────────────────────────────────────────────────────────
+
+type SupabaseClient = ReturnType<typeof createSupabaseAdminClient>;
+
+async function assertEventInOrg(
+  supabase: SupabaseClient,
+  eventId: string,
+  organizationId: string
+): Promise<void> {
+  const { data, error } = await supabase
+    .from("events")
+    .select("organization_id")
+    .eq("id", eventId)
+    .maybeSingle();
+  if (error || !data || data.organization_id !== organizationId) {
+    redirect(`/events/${eventId}?error=Evento inválido.`);
+  }
+}
+
+async function resolveEventDate(
+  supabase: SupabaseClient,
+  eventDateId: string,
+  organizationId: string
+): Promise<{ eventId: string }> {
+  const { data, error } = await supabase
+    .from("event_dates")
+    .select("id, event_id, events!inner (organization_id)")
+    .eq("id", eventDateId)
+    .maybeSingle();
+  if (error || !data) {
+    redirect(`/events?error=Data inválida.`);
+  }
+  const eventRel = (data as unknown as { events: { organization_id: string } | null }).events;
+  if (!eventRel || eventRel.organization_id !== organizationId) {
+    redirect(`/events?error=Data inválida.`);
+  }
+  return { eventId: (data as { event_id: string }).event_id };
+}
+
+async function resolveTeamAssignment(
+  supabase: SupabaseClient,
+  assignmentId: string,
+  organizationId: string
+): Promise<{ eventId: string }> {
+  const { data, error } = await supabase
+    .from("event_date_team_members")
+    .select(
+      `
+      id, event_date_id,
+      event_dates!inner (
+        event_id,
+        events!inner (organization_id)
+      )
+    `
+    )
+    .eq("id", assignmentId)
+    .maybeSingle();
+  if (error || !data) {
+    redirect(`/events?error=Atribuição inválida.`);
+  }
+  const dateRel = (data as unknown as {
+    event_dates: { event_id: string; events: { organization_id: string } | null } | null;
+  }).event_dates;
+  if (!dateRel || !dateRel.events || dateRel.events.organization_id !== organizationId) {
+    redirect(`/events?error=Atribuição inválida.`);
+  }
+  return { eventId: dateRel.event_id };
+}
+
+const TEAM_ROLES = [
+  "tecnico_responsavel",
+  "audio",
+  "luz",
+  "led",
+  "auxiliar",
+  "comercial",
+  "outro",
+] as const;
+type TeamRole = (typeof TEAM_ROLES)[number];
+
+function parseTeamRole(raw: string): TeamRole | null {
+  return (TEAM_ROLES as readonly string[]).includes(raw) ? (raw as TeamRole) : null;
+}
+
+// ──────────────────────────────────────────────────────────────────
+// addEventDate
+// Adiciona uma nova data ao evento. Trigger sincroniza
+// events.start_date / end_date (min/max).
+// ──────────────────────────────────────────────────────────────────
+export async function addEventDate(formData: FormData) {
+  const context = await requireWriteRole();
+  const organizationId = context.primaryOrganization?.id;
+  if (!organizationId) redirect("/dashboard?error=organization_not_found");
+
+  const eventId = String(formData.get("eventId") ?? "").trim();
+  const date = String(formData.get("date") ?? "").trim();
+  if (!eventId || !date) {
+    redirect(`/events/${eventId}?error=Data obrigatória.`);
+  }
+
+  const supabase = createSupabaseAdminClient();
+  await assertEventInOrg(supabase, eventId, organizationId);
+
+  const positionRaw = parseInt(String(formData.get("position") ?? "0"), 10);
+  const position = isNaN(positionRaw) ? 0 : positionRaw;
+  const eventStartTime = String(formData.get("eventStartTime") ?? "").trim() || null;
+  const eventEndTime = String(formData.get("eventEndTime") ?? "").trim() || null;
+  const notes = String(formData.get("notes") ?? "").trim() || null;
+
+  const { error } = await supabase.from("event_dates").insert({
+    event_id: eventId,
+    date,
+    position,
+    event_start_time: eventStartTime,
+    event_end_time: eventEndTime,
+    notes,
+  });
+
+  if (error) {
+    const msg = error.code === "23505" ? "Já existe uma data igual nessa OS." : error.message;
+    redirect(`/events/${eventId}?error=${encodeURIComponent(msg)}`);
+  }
+
+  revalidatePath(`/events/${eventId}`);
+  revalidatePath("/events");
+  redirect(`/events/${eventId}?success=Data adicionada.`);
+}
+
+// ──────────────────────────────────────────────────────────────────
+// updateEventDate
+// ──────────────────────────────────────────────────────────────────
+export async function updateEventDate(formData: FormData) {
+  const context = await requireWriteRole();
+  const organizationId = context.primaryOrganization?.id;
+  if (!organizationId) redirect("/dashboard?error=organization_not_found");
+
+  const eventDateId = String(formData.get("eventDateId") ?? "").trim();
+  if (!eventDateId) redirect("/events?error=Data inválida.");
+
+  const supabase = createSupabaseAdminClient();
+  const { eventId } = await resolveEventDate(supabase, eventDateId, organizationId);
+
+  const date = String(formData.get("date") ?? "").trim();
+  if (!date) {
+    redirect(`/events/${eventId}?error=Data obrigatória.`);
+  }
+  const positionRaw = parseInt(String(formData.get("position") ?? "0"), 10);
+  const position = isNaN(positionRaw) ? 0 : positionRaw;
+  const eventStartTime = String(formData.get("eventStartTime") ?? "").trim() || null;
+  const eventEndTime = String(formData.get("eventEndTime") ?? "").trim() || null;
+  const notes = String(formData.get("notes") ?? "").trim() || null;
+
+  const { error } = await supabase
+    .from("event_dates")
+    .update({
+      date,
+      position,
+      event_start_time: eventStartTime,
+      event_end_time: eventEndTime,
+      notes,
+    })
+    .eq("id", eventDateId);
+
+  if (error) {
+    const msg = error.code === "23505" ? "Já existe uma data igual nessa OS." : error.message;
+    redirect(`/events/${eventId}?error=${encodeURIComponent(msg)}`);
+  }
+
+  revalidatePath(`/events/${eventId}`);
+  redirect(`/events/${eventId}?success=Data atualizada.`);
+}
+
+// ──────────────────────────────────────────────────────────────────
+// removeEventDate
+// ──────────────────────────────────────────────────────────────────
+export async function removeEventDate(formData: FormData) {
+  const context = await requireWriteRole();
+  const organizationId = context.primaryOrganization?.id;
+  if (!organizationId) redirect("/dashboard?error=organization_not_found");
+
+  const eventDateId = String(formData.get("eventDateId") ?? "").trim();
+  if (!eventDateId) redirect("/events?error=Data inválida.");
+
+  const supabase = createSupabaseAdminClient();
+  const { eventId } = await resolveEventDate(supabase, eventDateId, organizationId);
+
+  const { error } = await supabase
+    .from("event_dates")
+    .delete()
+    .eq("id", eventDateId);
+
+  if (error) {
+    redirect(`/events/${eventId}?error=${encodeURIComponent(error.message)}`);
+  }
+
+  revalidatePath(`/events/${eventId}`);
+  redirect(`/events/${eventId}?success=Data removida.`);
+}
+
+// ──────────────────────────────────────────────────────────────────
+// addEventDateTeamMember
+// Adiciona pessoa à escala de uma data específica.
+// Híbrido: team_member_id (FK) OU external_name (texto).
+// Papel via enum; se 'outro', custom_role é obrigatório.
+// ──────────────────────────────────────────────────────────────────
+export async function addEventDateTeamMember(formData: FormData) {
+  const context = await requireWriteRole();
+  const organizationId = context.primaryOrganization?.id;
+  if (!organizationId) redirect("/dashboard?error=organization_not_found");
+
+  const eventDateId = String(formData.get("eventDateId") ?? "").trim();
+  if (!eventDateId) redirect("/events?error=Data inválida.");
+
+  const supabase = createSupabaseAdminClient();
+  const { eventId } = await resolveEventDate(supabase, eventDateId, organizationId);
+
+  const teamMemberId = String(formData.get("teamMemberId") ?? "").trim() || null;
+  const externalName = String(formData.get("externalName") ?? "").trim() || null;
+  const roleRaw = String(formData.get("role") ?? "").trim();
+  const role = parseTeamRole(roleRaw);
+  const customRole = String(formData.get("customRole") ?? "").trim() || null;
+  const notes = String(formData.get("notes") ?? "").trim() || null;
+
+  if (!role) {
+    redirect(`/events/${eventId}?error=${encodeURIComponent("Papel inválido.")}`);
+  }
+  if (!teamMemberId && !externalName) {
+    redirect(
+      `/events/${eventId}?error=${encodeURIComponent(
+        "Selecione um membro da equipe ou informe um nome."
+      )}`
+    );
+  }
+  if (role === "outro" && !customRole) {
+    redirect(
+      `/events/${eventId}?error=${encodeURIComponent(
+        "Descreva o papel personalizado quando seleciona 'Outro'."
+      )}`
+    );
+  }
+
+  // Se foi escolhido um team_member, valida que ele é da mesma org.
+  if (teamMemberId) {
+    const { data: tm, error: tmErr } = await supabase
+      .from("team_members")
+      .select("id, organization_id")
+      .eq("id", teamMemberId)
+      .maybeSingle();
+    if (tmErr || !tm || tm.organization_id !== organizationId) {
+      redirect(`/events/${eventId}?error=${encodeURIComponent("Membro inválido.")}`);
+    }
+  }
+
+  const { error } = await supabase.from("event_date_team_members").insert({
+    event_date_id: eventDateId,
+    team_member_id: teamMemberId,
+    external_name: teamMemberId ? null : externalName,
+    role,
+    custom_role: role === "outro" ? customRole : null,
+    notes,
+  });
+
+  if (error) {
+    redirect(`/events/${eventId}?error=${encodeURIComponent(error.message)}`);
+  }
+
+  revalidatePath(`/events/${eventId}`);
+  redirect(`/events/${eventId}?success=Pessoa adicionada à escala.`);
+}
+
+// ──────────────────────────────────────────────────────────────────
+// updateEventDateTeamMember
+// ──────────────────────────────────────────────────────────────────
+export async function updateEventDateTeamMember(formData: FormData) {
+  const context = await requireWriteRole();
+  const organizationId = context.primaryOrganization?.id;
+  if (!organizationId) redirect("/dashboard?error=organization_not_found");
+
+  const assignmentId = String(formData.get("assignmentId") ?? "").trim();
+  if (!assignmentId) redirect("/events?error=Atribuição inválida.");
+
+  const supabase = createSupabaseAdminClient();
+  const { eventId } = await resolveTeamAssignment(supabase, assignmentId, organizationId);
+
+  const teamMemberId = String(formData.get("teamMemberId") ?? "").trim() || null;
+  const externalName = String(formData.get("externalName") ?? "").trim() || null;
+  const roleRaw = String(formData.get("role") ?? "").trim();
+  const role = parseTeamRole(roleRaw);
+  const customRole = String(formData.get("customRole") ?? "").trim() || null;
+  const notes = String(formData.get("notes") ?? "").trim() || null;
+
+  if (!role) {
+    redirect(`/events/${eventId}?error=${encodeURIComponent("Papel inválido.")}`);
+  }
+  if (!teamMemberId && !externalName) {
+    redirect(
+      `/events/${eventId}?error=${encodeURIComponent(
+        "Selecione um membro da equipe ou informe um nome."
+      )}`
+    );
+  }
+  if (role === "outro" && !customRole) {
+    redirect(
+      `/events/${eventId}?error=${encodeURIComponent(
+        "Descreva o papel personalizado quando seleciona 'Outro'."
+      )}`
+    );
+  }
+
+  if (teamMemberId) {
+    const { data: tm, error: tmErr } = await supabase
+      .from("team_members")
+      .select("id, organization_id")
+      .eq("id", teamMemberId)
+      .maybeSingle();
+    if (tmErr || !tm || tm.organization_id !== organizationId) {
+      redirect(`/events/${eventId}?error=${encodeURIComponent("Membro inválido.")}`);
+    }
+  }
+
+  const { error } = await supabase
+    .from("event_date_team_members")
+    .update({
+      team_member_id: teamMemberId,
+      external_name: teamMemberId ? null : externalName,
+      role,
+      custom_role: role === "outro" ? customRole : null,
+      notes,
+    })
+    .eq("id", assignmentId);
+
+  if (error) {
+    redirect(`/events/${eventId}?error=${encodeURIComponent(error.message)}`);
+  }
+
+  revalidatePath(`/events/${eventId}`);
+  redirect(`/events/${eventId}?success=Escala atualizada.`);
+}
+
+// ──────────────────────────────────────────────────────────────────
+// removeEventDateTeamMember
+// ──────────────────────────────────────────────────────────────────
+export async function removeEventDateTeamMember(formData: FormData) {
+  const context = await requireWriteRole();
+  const organizationId = context.primaryOrganization?.id;
+  if (!organizationId) redirect("/dashboard?error=organization_not_found");
+
+  const assignmentId = String(formData.get("assignmentId") ?? "").trim();
+  if (!assignmentId) redirect("/events?error=Atribuição inválida.");
+
+  const supabase = createSupabaseAdminClient();
+  const { eventId } = await resolveTeamAssignment(supabase, assignmentId, organizationId);
+
+  const { error } = await supabase
+    .from("event_date_team_members")
+    .delete()
+    .eq("id", assignmentId);
+
+  if (error) {
+    redirect(`/events/${eventId}?error=${encodeURIComponent(error.message)}`);
+  }
+
+  revalidatePath(`/events/${eventId}`);
+  redirect(`/events/${eventId}?success=Pessoa removida da escala.`);
+}

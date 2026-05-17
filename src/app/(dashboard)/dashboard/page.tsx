@@ -12,6 +12,7 @@ import Link from "next/link";
 import { getCurrentUserContext } from "@/lib/auth/session";
 import { getDashboardKPIs, getCategoryStats } from "@/lib/dashboard";
 import { listEvents } from "@/lib/events";
+import { formatDateBR } from "@/lib/dates";
 import { CardSpotlight } from "@/components/ui/aceternity/card-spotlight";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 
@@ -139,7 +140,7 @@ export default async function DashboardPage() {
                       {event.name}
                     </p>
                     <p className="text-xs text-muted-foreground mt-0.5">
-                      {event.clientName ?? "—"} • {event.city ?? "—"} • {new Date(event.startDate).toLocaleDateString("pt-BR")}
+                      {event.clientName ?? "—"} • {event.city ?? "—"} • {formatDateBR(event.startDate)}
                     </p>
                   </div>
                   <div className="flex items-center gap-3 sm:shrink-0">

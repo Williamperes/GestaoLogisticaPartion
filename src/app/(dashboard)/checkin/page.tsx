@@ -9,6 +9,7 @@ import {
 
 import { getEventById } from "@/lib/events";
 import { getCurrentUserContext } from "@/lib/auth/session";
+import { formatDateBR } from "@/lib/dates";
 import { Progress } from "@/components/ui/progress";
 import { SubmitButton } from "@/components/ui/SubmitButton";
 
@@ -54,7 +55,7 @@ export default async function CheckinPage({ searchParams }: CheckinPageProps) {
         </div>
         <h1 className="text-xl font-bold">{event.name}</h1>
         <p className="mt-0.5 text-sm text-muted-foreground">
-          {event.clientName ?? "—"} • {new Date(event.endDate).toLocaleDateString("pt-BR")}
+          {event.clientName ?? "—"} • {formatDateBR(event.endDate)}
         </p>
       </div>
 

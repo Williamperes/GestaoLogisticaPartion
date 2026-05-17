@@ -30,6 +30,8 @@ import {
   toggleChecklistItem,
   promoteToReadyToLoad,
   updateEventDetails,
+  addEventDate,
+  addEventDateTeamMember,
 } from "@/app/(dashboard)/events/actions";
 
 function buildFormData(values: Record<string, string>) {
@@ -590,5 +592,220 @@ describe("events actions", () => {
         })
       )
     ).rejects.toThrow(/Nome%20%C3%A9%20obrigat%C3%B3rio\./);
+  });
+
+  // ── Refactor D: event_dates + escala ────────────────────────────
+
+  it("inserts a new event_date when the event belongs to the user's org", async () => {
+    const eventFetchMaybeSingle = vi.fn().mockResolvedValue({
+      data: { organization_id: "org-1" },
+      error: null,
+    });
+    const eventFetchEq = vi.fn().mockReturnValue({ maybeSingle: eventFetchMaybeSingle });
+    const eventFetchSelect = vi.fn().mockReturnValue({ eq: eventFetchEq });
+
+    const datesInsert = vi.fn().mockResolvedValue({ error: null });
+
+    mocks.createSupabaseAdminClient.mockReturnValue({
+      from: vi.fn((table: string) => {
+        if (table === "events") return { select: eventFetchSelect };
+        if (table === "event_dates") return { insert: datesInsert };
+        return {};
+      }),
+    });
+    mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+
+    await expect(
+      addEventDate(
+        buildFormData({
+          eventId: "event-50",
+          date: "2026-02-28",
+          eventStartTime: "20:00",
+          eventEndTime: "23:00",
+          position: "0",
+          notes: "Cênica externa só no sábado.",
+        })
+      )
+    ).rejects.toThrow("NEXT_REDIRECT:/events/event-50?success=Data adicionada.");
+
+    expect(datesInsert).toHaveBeenCalledWith({
+      event_id: "event-50",
+      date: "2026-02-28",
+      position: 0,
+      event_start_time: "20:00",
+      event_end_time: "23:00",
+      notes: "Cênica externa só no sábado.",
+    });
+  });
+
+  it("rejects addEventDate when the event belongs to a different org", async () => {
+    const eventFetchMaybeSingle = vi.fn().mockResolvedValue({
+      data: { organization_id: "other-org" },
+      error: null,
+    });
+    const eventFetchEq = vi.fn().mockReturnValue({ maybeSingle: eventFetchMaybeSingle });
+    const eventFetchSelect = vi.fn().mockReturnValue({ eq: eventFetchEq });
+
+    const datesInsert = vi.fn().mockResolvedValue({ error: null });
+
+    mocks.createSupabaseAdminClient.mockReturnValue({
+      from: vi.fn((table: string) => {
+        if (table === "events") return { select: eventFetchSelect };
+        if (table === "event_dates") return { insert: datesInsert };
+        return {};
+      }),
+    });
+    mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+
+    await expect(
+      addEventDate(
+        buildFormData({ eventId: "event-99", date: "2026-02-28" })
+      )
+    ).rejects.toThrow("NEXT_REDIRECT:/events/event-99?error=Evento inválido.");
+
+    expect(datesInsert).not.toHaveBeenCalled();
+  });
+
+  it("rejects addEventDateTeamMember when no team_member nor external_name is provided", async () => {
+    const dateFetchMaybeSingle = vi.fn().mockResolvedValue({
+      data: { id: "date-1", event_id: "event-50", events: { organization_id: "org-1" } },
+      error: null,
+    });
+    const dateFetchEq = vi.fn().mockReturnValue({ maybeSingle: dateFetchMaybeSingle });
+    const dateFetchSelect = vi.fn().mockReturnValue({ eq: dateFetchEq });
+
+    const teamInsert = vi.fn().mockResolvedValue({ error: null });
+
+    mocks.createSupabaseAdminClient.mockReturnValue({
+      from: vi.fn((table: string) => {
+        if (table === "event_dates") return { select: dateFetchSelect };
+        if (table === "event_date_team_members") return { insert: teamInsert };
+        return {};
+      }),
+    });
+    mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+
+    await expect(
+      addEventDateTeamMember(
+        buildFormData({
+          eventDateId: "date-1",
+          role: "audio",
+        })
+      )
+    ).rejects.toThrow(/Selecione%20um%20membro/);
+
+    expect(teamInsert).not.toHaveBeenCalled();
+  });
+
+  it("rejects addEventDateTeamMember when role=outro but no custom_role is given", async () => {
+    const dateFetchMaybeSingle = vi.fn().mockResolvedValue({
+      data: { id: "date-1", event_id: "event-50", events: { organization_id: "org-1" } },
+      error: null,
+    });
+    const dateFetchEq = vi.fn().mockReturnValue({ maybeSingle: dateFetchMaybeSingle });
+    const dateFetchSelect = vi.fn().mockReturnValue({ eq: dateFetchEq });
+
+    const teamInsert = vi.fn().mockResolvedValue({ error: null });
+
+    mocks.createSupabaseAdminClient.mockReturnValue({
+      from: vi.fn((table: string) => {
+        if (table === "event_dates") return { select: dateFetchSelect };
+        if (table === "event_date_team_members") return { insert: teamInsert };
+        return {};
+      }),
+    });
+    mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+
+    await expect(
+      addEventDateTeamMember(
+        buildFormData({
+          eventDateId: "date-1",
+          externalName: "Henry (banda)",
+          role: "outro",
+        })
+      )
+    ).rejects.toThrow(/Descreva%20o%20papel%20personalizado/);
+
+    expect(teamInsert).not.toHaveBeenCalled();
+  });
+
+  it("inserts a team assignment with custom_role when role=outro", async () => {
+    const dateFetchMaybeSingle = vi.fn().mockResolvedValue({
+      data: { id: "date-1", event_id: "event-50", events: { organization_id: "org-1" } },
+      error: null,
+    });
+    const dateFetchEq = vi.fn().mockReturnValue({ maybeSingle: dateFetchMaybeSingle });
+    const dateFetchSelect = vi.fn().mockReturnValue({ eq: dateFetchEq });
+
+    const teamInsert = vi.fn().mockResolvedValue({ error: null });
+
+    mocks.createSupabaseAdminClient.mockReturnValue({
+      from: vi.fn((table: string) => {
+        if (table === "event_dates") return { select: dateFetchSelect };
+        if (table === "event_date_team_members") return { insert: teamInsert };
+        return {};
+      }),
+    });
+    mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+
+    await expect(
+      addEventDateTeamMember(
+        buildFormData({
+          eventDateId: "date-1",
+          externalName: "Henry (banda)",
+          role: "outro",
+          customRole: "Banda",
+        })
+      )
+    ).rejects.toThrow(/success=Pessoa adicionada/);
+
+    expect(teamInsert).toHaveBeenCalledWith({
+      event_date_id: "date-1",
+      team_member_id: null,
+      external_name: "Henry (banda)",
+      role: "outro",
+      custom_role: "Banda",
+      notes: null,
+    });
+  });
+
+  it("rejects addEventDateTeamMember when team_member belongs to a different org", async () => {
+    const dateFetchMaybeSingle = vi.fn().mockResolvedValue({
+      data: { id: "date-1", event_id: "event-50", events: { organization_id: "org-1" } },
+      error: null,
+    });
+    const dateFetchEq = vi.fn().mockReturnValue({ maybeSingle: dateFetchMaybeSingle });
+    const dateFetchSelect = vi.fn().mockReturnValue({ eq: dateFetchEq });
+
+    const tmFetchMaybeSingle = vi.fn().mockResolvedValue({
+      data: { id: "tm-1", organization_id: "other-org" },
+      error: null,
+    });
+    const tmFetchEq = vi.fn().mockReturnValue({ maybeSingle: tmFetchMaybeSingle });
+    const tmFetchSelect = vi.fn().mockReturnValue({ eq: tmFetchEq });
+
+    const teamInsert = vi.fn().mockResolvedValue({ error: null });
+
+    mocks.createSupabaseAdminClient.mockReturnValue({
+      from: vi.fn((table: string) => {
+        if (table === "event_dates") return { select: dateFetchSelect };
+        if (table === "team_members") return { select: tmFetchSelect };
+        if (table === "event_date_team_members") return { insert: teamInsert };
+        return {};
+      }),
+    });
+    mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+
+    await expect(
+      addEventDateTeamMember(
+        buildFormData({
+          eventDateId: "date-1",
+          teamMemberId: "tm-1",
+          role: "audio",
+        })
+      )
+    ).rejects.toThrow(/Membro%20inv%C3%A1lido/);
+
+    expect(teamInsert).not.toHaveBeenCalled();
   });
 });
