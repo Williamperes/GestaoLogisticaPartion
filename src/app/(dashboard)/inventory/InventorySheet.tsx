@@ -1,6 +1,7 @@
 "use client";
 
-import { Package, Plus } from "lucide-react";
+import { useState } from "react";
+import { Boxes, Package, Plus } from "lucide-react";
 
 import {
   Sheet,
@@ -24,7 +25,12 @@ interface InventorySheetProps {
   categories: EquipmentCategory[];
 }
 
+type EquipmentTypeChoice = "serialized" | "bulk";
+
 export function InventorySheet({ categories }: InventorySheetProps) {
+  const [type, setType] = useState<EquipmentTypeChoice>("serialized");
+  const [hasVariants, setHasVariants] = useState(false);
+
   return (
     <Sheet>
       <SheetTrigger render={<Button className="h-10 rounded-xl px-4 text-sm font-semibold" />}>
@@ -39,21 +45,72 @@ export function InventorySheet({ categories }: InventorySheetProps) {
         <SheetHeader className="border-b border-border px-6 py-5">
           <SheetTitle>Cadastrar equipamento</SheetTitle>
           <SheetDescription>
-            Cadastre um item serializado com número de série e identificação individual.
+            Escolha entre item serializado (com número de série) ou em lote (quantidade
+            agregada por unidade de medida).
           </SheetDescription>
         </SheetHeader>
 
         <form action={createEquipment} className="flex flex-1 flex-col overflow-y-auto">
-          <input type="hidden" name="type" value="serialized" />
+          <input type="hidden" name="type" value={type} />
 
           <div className="flex flex-col gap-5 px-6 py-6">
+            <div className="grid gap-3">
+              <span className={LABEL_TEXT_CLASS}>Tipo de cadastro *</span>
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => setType("serialized")}
+                  className={`flex items-start gap-3 rounded-xl border px-4 py-3 text-left transition ${
+                    type === "serialized"
+                      ? "border-amber-500 bg-amber-500/10"
+                      : "border-border bg-background/40 hover:border-amber-500/40"
+                  }`}
+                >
+                  <Package
+                    className={`mt-0.5 h-4 w-4 ${
+                      type === "serialized" ? "text-amber-600" : "text-muted-foreground"
+                    }`}
+                  />
+                  <div className="space-y-0.5">
+                    <p className="text-sm font-medium">Serializado</p>
+                    <p className="text-xs text-muted-foreground">
+                      Cada unidade tem número de série único.
+                    </p>
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setType("bulk")}
+                  className={`flex items-start gap-3 rounded-xl border px-4 py-3 text-left transition ${
+                    type === "bulk"
+                      ? "border-amber-500 bg-amber-500/10"
+                      : "border-border bg-background/40 hover:border-amber-500/40"
+                  }`}
+                >
+                  <Boxes
+                    className={`mt-0.5 h-4 w-4 ${
+                      type === "bulk" ? "text-amber-600" : "text-muted-foreground"
+                    }`}
+                  />
+                  <div className="space-y-0.5">
+                    <p className="text-sm font-medium">Em lote</p>
+                    <p className="text-xs text-muted-foreground">
+                      Quantidade agregada (ex.: 50m de cabo, 200 parafusos).
+                    </p>
+                  </div>
+                </button>
+              </div>
+            </div>
+
             <div className="grid gap-4">
               <label className={LABEL_CLASS}>
                 <span className={LABEL_TEXT_CLASS}>Nome do equipamento *</span>
                 <input
                   name="name"
                   required
-                  placeholder="Ex.: Mesa Yamaha PM7"
+                  placeholder={
+                    type === "serialized" ? "Ex.: Mesa Yamaha PM7" : "Ex.: Cabo de áudio"
+                  }
                   className={INPUT_CLASS}
                 />
               </label>
@@ -85,61 +142,111 @@ export function InventorySheet({ categories }: InventorySheetProps) {
                 <input
                   type="checkbox"
                   name="hasVariants"
+                  checked={hasVariants}
+                  onChange={(e) => setHasVariants(e.target.checked)}
                   className="mt-0.5 h-4 w-4 rounded border-border accent-amber-500"
                 />
                 <div className="space-y-0.5">
                   <p className="text-sm font-medium">Tem variantes de tamanho</p>
                   <p className="text-xs text-muted-foreground">
                     Marque se o item tem versões por tamanho (ex.: 5M, 10M, P, M, G).
-                    A unidade abaixo NÃO será criada; configure as variantes
-                    depois na página de detalhe.
+                    {type === "serialized"
+                      ? " A unidade abaixo NÃO será criada;"
+                      : " O estoque abaixo NÃO será criado;"}{" "}
+                    configure as variantes depois na página de detalhe.
                   </p>
                 </div>
               </label>
             </div>
 
-            <div className="grid gap-4 rounded-xl border border-amber-500/20 bg-amber-500/5 p-4">
-              <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-amber-600">
-                <Package className="h-3.5 w-3.5" />
-                Identificação da unidade
-              </p>
-              <div className="grid gap-4 sm:grid-cols-2">
-                <label className={LABEL_CLASS}>
-                  <span className={LABEL_TEXT_CLASS}>Número de série *</span>
-                  <input
-                    name="serial"
-                    required
-                    placeholder="Ex.: PM7-0042"
-                    className={INPUT_CLASS}
-                  />
-                </label>
-                <label className={LABEL_CLASS}>
-                  <span className={LABEL_TEXT_CLASS}>Nº Patrimônio</span>
-                  <input
-                    name="patrimony"
-                    placeholder="Ex.: PAT-2023-042"
-                    className={INPUT_CLASS}
-                  />
-                </label>
+            {type === "serialized" ? (
+              <div className="grid gap-4 rounded-xl border border-amber-500/20 bg-amber-500/5 p-4">
+                <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-amber-600">
+                  <Package className="h-3.5 w-3.5" />
+                  Identificação da unidade
+                  {hasVariants && (
+                    <span className="font-normal normal-case tracking-normal text-muted-foreground">
+                      · não será criada (variantes ativas)
+                    </span>
+                  )}
+                </p>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <label className={LABEL_CLASS}>
+                    <span className={LABEL_TEXT_CLASS}>
+                      Número de série {hasVariants ? "" : "*"}
+                    </span>
+                    <input
+                      name="serial"
+                      required={!hasVariants}
+                      placeholder="Ex.: PM7-0042"
+                      className={INPUT_CLASS}
+                    />
+                  </label>
+                  <label className={LABEL_CLASS}>
+                    <span className={LABEL_TEXT_CLASS}>Nº Patrimônio</span>
+                    <input
+                      name="patrimony"
+                      placeholder="Ex.: PAT-2023-042"
+                      className={INPUT_CLASS}
+                    />
+                  </label>
+                </div>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <label className={LABEL_CLASS}>
+                    <span className={LABEL_TEXT_CLASS}>Data de aquisição</span>
+                    <input name="purchaseDate" type="date" className={INPUT_CLASS} />
+                  </label>
+                  <label className={LABEL_CLASS}>
+                    <span className={LABEL_TEXT_CLASS}>Valor de aquisição (R$)</span>
+                    <input
+                      name="purchaseValue"
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      placeholder="0,00"
+                      className={INPUT_CLASS}
+                    />
+                  </label>
+                </div>
               </div>
-              <div className="grid gap-4 sm:grid-cols-2">
-                <label className={LABEL_CLASS}>
-                  <span className={LABEL_TEXT_CLASS}>Data de aquisição</span>
-                  <input name="purchaseDate" type="date" className={INPUT_CLASS} />
-                </label>
-                <label className={LABEL_CLASS}>
-                  <span className={LABEL_TEXT_CLASS}>Valor de aquisição (R$)</span>
-                  <input
-                    name="purchaseValue"
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    placeholder="0,00"
-                    className={INPUT_CLASS}
-                  />
-                </label>
+            ) : (
+              <div className="grid gap-4 rounded-xl border border-amber-500/20 bg-amber-500/5 p-4">
+                <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-amber-600">
+                  <Boxes className="h-3.5 w-3.5" />
+                  Estoque do lote
+                  {hasVariants && (
+                    <span className="font-normal normal-case tracking-normal text-muted-foreground">
+                      · não será criado (variantes ativas)
+                    </span>
+                  )}
+                </p>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <label className={LABEL_CLASS}>
+                    <span className={LABEL_TEXT_CLASS}>Unidade de medida</span>
+                    <input
+                      name="unit"
+                      defaultValue="unidades"
+                      placeholder="Ex.: metros, peças, unidades"
+                      className={INPUT_CLASS}
+                    />
+                  </label>
+                  <label className={LABEL_CLASS}>
+                    <span className={LABEL_TEXT_CLASS}>
+                      Quantidade inicial {hasVariants ? "" : "*"}
+                    </span>
+                    <input
+                      name="totalQty"
+                      type="number"
+                      min={hasVariants ? 0 : 1}
+                      required={!hasVariants}
+                      placeholder={hasVariants ? "Configure por variante" : "Ex.: 50"}
+                      disabled={hasVariants}
+                      className={INPUT_CLASS}
+                    />
+                  </label>
+                </div>
               </div>
-            </div>
+            )}
 
             <label className={LABEL_CLASS}>
               <span className={LABEL_TEXT_CLASS}>Observações</span>

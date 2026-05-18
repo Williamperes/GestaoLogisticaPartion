@@ -17,6 +17,7 @@ import { EditEquipmentSheet } from "@/app/(dashboard)/inventory/[id]/EditEquipme
 import { AddUnitSheet } from "@/app/(dashboard)/inventory/[id]/AddUnitSheet";
 import { UnitStatusForm } from "@/app/(dashboard)/inventory/[id]/UnitStatusForm";
 import { VariantManager } from "@/app/(dashboard)/inventory/[id]/VariantManager";
+import { BulkAdjustDialog } from "@/app/(dashboard)/inventory/[id]/BulkAdjustDialog";
 
 interface Props {
   params: Promise<{ id: string }>;
@@ -146,6 +147,35 @@ export default async function InventoryDetailPage({ params, searchParams }: Prop
           variants={equipment.variants ?? []}
           canWrite={canWrite}
         />
+      )}
+
+      {/* Bulk sem variantes: card de estoque + ajustar */}
+      {equipment.type === "bulk" && !equipment.hasVariants && equipment.bulk && (
+        <div className="rounded-xl border border-border bg-card p-5">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <h2 className="text-sm font-semibold">Estoque do lote</h2>
+              <p className="mt-2 text-2xl font-bold">
+                <span className="font-mono">{equipment.bulk.availableQty}</span>
+                <span className="text-muted-foreground"> / {equipment.bulk.totalQty}</span>{" "}
+                <span className="text-sm font-normal text-muted-foreground">
+                  {equipment.bulk.unit}
+                </span>
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Disponível / Total
+              </p>
+            </div>
+            {canWrite && <BulkAdjustDialog equipment={equipment} />}
+          </div>
+        </div>
+      )}
+
+      {/* Bulk sem variantes e sem registro de estoque: aviso */}
+      {equipment.type === "bulk" && !equipment.hasVariants && !equipment.bulk && (
+        <div className="rounded-xl border border-amber-500/30 bg-amber-500/8 px-5 py-4 text-sm text-amber-700">
+          Este lote ainda não tem estoque cadastrado.
+        </div>
       )}
 
       {/* Serialized: units table */}
