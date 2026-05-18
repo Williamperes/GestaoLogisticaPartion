@@ -1,9 +1,10 @@
-# Refactor 2 (UI gaps inventário/eventos) + F1a (tabelas auxiliares)
+# Refactor 2 (UI gaps inventário/eventos) + F1a (tabelas auxiliares) + H (overlap por datas reais)
 
 > Resolve gaps de UI que ficaram abertos depois do Refactor E (migration
-> 013) e abre o Refactor F do `docs/projeto-contexto.md` §6.2 item 7
-> com as duas tabelas auxiliares de maior dor operacional:
-> `event_speakers` e `event_extras`.
+> 013), abre o Refactor F do `docs/projeto-contexto.md` §6.2 item 7
+> com as duas tabelas auxiliares de maior dor operacional
+> (`event_speakers` e `event_extras`) e fecha o Refactor H que corrige
+> falso positivo de overlap em OS multi-data não-consecutiva.
 
 ## 1. Motivação
 
@@ -41,6 +42,15 @@ Os outros itens (LED panel, venue info, lodging, meals, transport,
 load_dock, critical points, attachments) ficaram para fases seguintes.
 `event_attachments` está separado em F1b por exigir Supabase Storage
 (bucket, signed URLs, upload flow), que tem complexidade própria.
+
+Por fim, **Refactor H** resolveu um falso positivo de overlap de
+estoque herdado do Refactor D. As OS passaram a aceitar multi-data
+não-consecutiva (ex.: `01/08 + 15/08`), mas o cache
+`events.start_date/end_date` virou `min(date)/max(date)`, fazendo o
+algoritmo de disponibilidade tratar qualquer OS no intervalo `[01/08,
+15/08]` (incluindo `08/08`) como conflitante mesmo sem sobreposição
+real. Operador via "Estoque Insuficiente" falso e bloqueio de promoção
+indevido.
 
 ---
 
@@ -226,6 +236,84 @@ posição após "Equipamentos". Badge mostra
 - `KIND_ORDER` define ordem fixa do select de tipo (gerador
   primeiro, "outro" último) — espelha frequência de uso esperada.
 
+### 2.7. Refactor H — overlap por datas reais (`event_dates`)
+
+#### Assinatura antiga (legacy do Refactor D)
+
+```ts
+getEquipmentAvailability(
+  organizationId,
+  startDate: string,   // events.start_date (min)
+  endDate: string,     // events.end_date (max)
+  excludeEventId?
+)
+```
+
+Filtro de OS conflitantes:
+`events.start_date <= endDate AND events.end_date >= startDate`.
+Funciona quando OS é range contínuo. Falha quando datas pulam dia:
+o cache range é maior que a união real das datas.
+
+#### Assinatura nova
+
+```ts
+getEquipmentAvailability(
+  organizationId,
+  dates: string[],     // datas exatas da OS sendo avaliada
+  excludeEventId?
+)
+```
+
+Fluxo interno:
+1. Query 1: capacidade (igual antes — não depende de datas).
+2. Query 2: `event_dates` filtrado por `date IN (dates)` join
+   `events!inner status IN (planning|ready_to_load|in_field)`.
+   Resultado: IDs de OS que têm ao menos UMA data em comum.
+3. Query 3: `event_equipment` filtrado por
+   `event_id IN (sobrepostas)`.
+
+Trade-off: 1 query extra por chamada (3 vs 2 do antes). O ganho de
+correção compensa.
+
+#### Por que não usa subquery agregada
+
+PostgREST do `supabase-js` não expõe subqueries arbitrárias — só
+joins via `!inner`. O custo de serializar 2 roundtrips é baixo
+(mesmas linhas que seriam buscadas; filtro idêntico). Quando virar
+gargalo, a saída é uma RPC SQL custom
+(`get_equipment_availability_v2`).
+
+#### Caso especial: OS sem datas
+
+`dates: []` → função retorna `allocated: 0` para todas as chaves.
+Sem datas, não dá pra avaliar conflito; tratar como "sem reserva"
+evita erro espúrio. Equivalente: OS rascunho/draft.
+
+#### Callers e propagação de `dates`
+
+Todos os 4 callers agora resolvem `dates` antes de chamar:
+
+- **`/events/<id>` page:** `event.dates` vem de `listEventDates(id)`
+  já fetched em paralelo. Mapa: `eventDates.map(d => d.date)`.
+- **`promoteToReadyToLoad`** e **`setEventEquipmentBatch`** (actions):
+  helper local `getEventDateList(supabase, eventId)` faz select
+  simples em `event_dates` filtrado por `event_id`. Removido
+  `start_date, end_date` do select prévio em `events` (era info não
+  usada para mais nada).
+- **`getEventsWithInsufficientStock`** (events.ts): `listEvents` agora
+  popula `Event.dates` via select expandido (`event_dates (date)`) —
+  evita N+1 separado só pra descobrir as datas de cada OS.
+
+#### Cache `events.start_date/end_date` permanece
+
+Continua sincronizado por trigger (Refactor D). Não é mais consumido
+pelo overlap, mas ainda serve:
+- Coluna "Data" da listagem `/events` (formato `15/08 — 16/08`).
+- Ordenação `order("start_date", desc)` em `listEvents`.
+
+Eliminar o cache exigiria refatorar consumidores adicionais; manter
+gratuitamente é benigno e útil para display.
+
 ---
 
 ## 3. Mudanças por arquivo
@@ -239,14 +327,23 @@ posição após "Equipamentos". Badge mostra
 - `src/lib/events.ts` — re-exporta de `event-aux`, adiciona
   `speakers[]`/`extras[]` em `EventDetail`, novo `EventEquipmentBrief`
   e `getEventsWithInsufficientStock`, expande SELECT de `getEventById`
-  e `listEvents`.
+  e `listEvents` (inclui `event_dates (date)` para H, popula
+  `Event.dates`).
 - `src/lib/inventory.ts` — novo `EquipmentAllocation` type +
-  `getEquipmentAllocations()`.
+  `getEquipmentAllocations()`; **Refactor H:**
+  `getEquipmentAvailability` muda assinatura
+  `(orgId, startDate, endDate, excludeEventId?)` →
+  `(orgId, dates: string[], excludeEventId?)` com overlap baseado em
+  `event_dates`.
 
 ### Actions
 - `src/app/(dashboard)/events/actions.ts` — 6 actions novas (speakers
   + extras), helpers `resolveSpeaker`, `resolveExtra`,
-  `parseExtraKind`, `parseUnitPriceCents`.
+  `parseExtraKind`, `parseUnitPriceCents`; **Refactor H:** helper
+  `getEventDateList(supabase, eventId)` + atualização de
+  `promoteToReadyToLoad` e `setEventEquipmentBatch` para passar
+  `eventDates: string[]` ao novo
+  `getEquipmentAvailability`.
 
 ### UI
 - `src/app/(dashboard)/inventory/InventorySheet.tsx` — toggle
@@ -256,13 +353,19 @@ posição após "Equipamentos". Badge mostra
 - `src/app/(dashboard)/events/page.tsx` — badge "Estoque
   Insuficiente" inline com `AlertTriangle`.
 - `src/app/(dashboard)/events/[id]/page.tsx` — tab nova + render
-  dos painéis.
+  dos painéis. Para H: passa `eventDates.map(d => d.date)` ao
+  `getEquipmentAvailability` em vez de
+  `event.startDate, event.endDate`.
 - `src/app/(dashboard)/events/[id]/SpeakersPanel.tsx` (novo).
 - `src/app/(dashboard)/events/[id]/ExtrasPanel.tsx` (novo).
 
 ### Testes
 - `tests/team.actions.test.ts` — fix de 3 testes que esperavam
   strings não-encoded.
+- `tests/events.actions.test.ts` — 3 testes atualizados para Refactor H:
+  branch `event_dates` adicionada nos mocks de `from()` retornando
+  `data: [{ date: "..." }]`; removido `start_date/end_date` da
+  resposta de `events` (não é mais lido).
 
 ---
 
@@ -322,6 +425,19 @@ cotado/negociado", não "grátis". Mostrar `R$ 0,00` num item sem
 cotação induziria a erro de orçamento. Total no header só aparece
 quando pelo menos um item tem preço.
 
+### 4.7. Refactor H usa `event_dates` separadamente, não cache range
+
+Tentação: subir tudo numa query agregada com subquery
+`WHERE event_id IN (SELECT ... FROM event_dates ...)`. PostgREST do
+`supabase-js` não suporta — só `!inner` join. Optei por 2 queries
+separadas (event_dates → eventIds, event_equipment → soma) ao invés
+de uma RPC SQL custom para manter a função em TypeScript puro,
+testável e idêntica em estilo aos outros fetchers do `lib/`.
+
+Performance: 3 queries por chamada vs 2 antes. Para uma listagem de
+50 OS, fica em ~150 queries. Aceitável MVP. Refatorar para uma RPC
+única ou view materializada quando passar de ~100 OS ativas.
+
 ---
 
 ## 5. Trade-offs e limitações
@@ -358,6 +474,20 @@ quando pelo menos um item tem preço.
    Página de detalhe mostra aviso "Este lote ainda não tem estoque
    cadastrado." quando bulk sem variantes nem bulk_inventory.
 
+8. **Refactor H custa 1 query a mais por chamada:**
+   `getEquipmentAvailability` agora faz 3 roundtrips ao DB (caps,
+   event_dates → eventIds, event_equipment). O ganho de correção
+   (zero falso positivo de overlap em OS multi-data não-consecutiva)
+   compensa, mas vira gargalo em listagens muito grandes. Plano de
+   otimização: RPC SQL custom único agregando tudo, ou view
+   materializada.
+
+9. **Cache `events.start_date/end_date` redundante para overlap:**
+   após H, o cache não é mais consumido pelo cálculo de
+   disponibilidade. Continua sincronizado por trigger e usado apenas
+   para display/ordenação. Eliminar exigiria refatorar consumidores
+   adicionais — adiado.
+
 ---
 
 ## 6. Pendências
@@ -376,9 +506,11 @@ quando pelo menos um item tem preço.
    é batch toggle; não rastreia avaria individual. Discussão de UX
    pendente.
 
-4. **Otimização single-query do `getEventsWithInsufficientStock`:**
+4. **Otimização single-query / RPC para
+   `getEquipmentAvailability` + `getEventsWithInsufficientStock`:**
    quando passar de ~100 OS ativas, refatorar para uma única query
-   agregada.
+   agregada ou RPC SQL custom. Refactor H já trouxe 1 query extra
+   por chamada.
 
 5. **Reordenação drag-and-drop de speakers/extras:** se houver demanda.
 
@@ -436,6 +568,10 @@ B, D, E + os ajustes deste docs.
 | `69a132e` | feat(inventory): rastreabilidade reversa — OSes alocando equipamento no detail |
 | `31a0aeb` | test(team): match URL-encoded redirect strings emitted by actions |
 | `c366b85` | feat(events): refactor F1a — event_speakers + event_extras |
+| `6a8470d` | docs: refactor 2 (UI gaps inventário/eventos) + F1a (tabelas auxiliares) |
+| `b675909` | fix(availability): refactor H — overlap por datas reais (event_dates), não cache range |
 
 Branch: `main` (já em `origin/main`).
-Migration: `20260518_000014_event_speakers_and_extras.sql`.
+Migration: `20260518_000014_event_speakers_and_extras.sql`. Refactor H
+não exige migration — pura mudança de lógica em `lib/inventory.ts`
+consumindo o `event_dates` que Refactor D já criou.
