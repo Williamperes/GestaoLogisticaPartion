@@ -1,10 +1,15 @@
-import { Search, Plus } from "lucide-react";
+import { Search, Plus, AlertTriangle } from "lucide-react";
 import Link from "next/link";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { Progress } from "@/components/ui/progress";
 import { EventSheet } from "@/app/(dashboard)/events/EventSheet";
 import { getCurrentUserContext } from "@/lib/auth/session";
-import { listEvents, formatEventStatus, getGateProgress } from "@/lib/events";
+import {
+  listEvents,
+  formatEventStatus,
+  getGateProgress,
+  getEventsWithInsufficientStock,
+} from "@/lib/events";
 import { listClientOrganizations } from "@/lib/clients";
 import { listChecklistTemplates } from "@/lib/checklist-templates";
 import { formatDateBR } from "@/lib/dates";
@@ -37,6 +42,10 @@ export default async function EventsPage({ searchParams }: EventsPageProps) {
         listChecklistTemplates(organizationId),
       ])
     : [[], [], []];
+
+  const oversoldEvents = organizationId
+    ? await getEventsWithInsufficientStock(organizationId, events)
+    : new Set<string>();
 
   const filtered =
     statusFilter === "all"
@@ -128,12 +137,23 @@ export default async function EventsPage({ searchParams }: EventsPageProps) {
                 return (
                   <tr key={event.id} className="group transition-colors hover:bg-black/2">
                     <td className="px-5 py-4">
-                      <Link
-                        href={`/events/${event.id}`}
-                        className="font-medium transition-colors group-hover:text-amber-600"
-                      >
-                        {event.name}
-                      </Link>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Link
+                          href={`/events/${event.id}`}
+                          className="font-medium transition-colors group-hover:text-amber-600"
+                        >
+                          {event.name}
+                        </Link>
+                        {oversoldEvents.has(event.id) && (
+                          <span
+                            title="Pelo menos 1 item alocado acima do estoque disponível para o período"
+                            className="inline-flex items-center gap-1 rounded-md border border-red-500/30 bg-red-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-red-600"
+                          >
+                            <AlertTriangle className="h-3 w-3" />
+                            Estoque insuficiente
+                          </span>
+                        )}
+                      </div>
                       {event.city && (
                         <p className="mt-0.5 text-xs text-muted-foreground">{event.city}</p>
                       )}

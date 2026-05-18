@@ -1,5 +1,6 @@
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 import type { ChecklistSection } from "@/lib/checklist-templates";
+import { getEquipmentAvailability, availabilityKey } from "@/lib/inventory";
 
 // ──────────────────────────────────────────────────────────────────
 // Types
@@ -72,6 +73,13 @@ export interface Event {
   checklistTotal?: number;
   checklistDone?: number;
   equipmentCount?: number;
+  equipmentBrief?: EventEquipmentBrief[];
+}
+
+export interface EventEquipmentBrief {
+  equipmentId: string;
+  variantId: string | null;
+  qty: number;
 }
 
 export interface EventDetail extends Event {
@@ -115,7 +123,7 @@ export async function listEvents(organizationId: string, search?: string): Promi
       strict_venue_hours,
       organizations!events_client_organization_id_fkey (name),
       event_checklist_items (id, done, required),
-      event_equipment (id)
+      event_equipment (id, equipment_id, variant_id, qty)
     `)
     .eq("organization_id", organizationId)
     .order("start_date", { ascending: false });
@@ -133,7 +141,13 @@ export async function listEvents(organizationId: string, search?: string): Promi
       const clientOrg = row.organizations as unknown as { name: string } | null;
       const checklist =
         (row.event_checklist_items as unknown as { id: string; done: boolean; required: boolean }[]) ?? [];
-      const equipment = (row.event_equipment as unknown as { id: string }[]) ?? [];
+      const equipment =
+        (row.event_equipment as unknown as {
+          id: string;
+          equipment_id: string;
+          variant_id: string | null;
+          qty: number;
+        }[]) ?? [];
       const requiredItems = checklist.filter((c) => c.required ?? true);
 
       return {
@@ -166,9 +180,58 @@ export async function listEvents(organizationId: string, search?: string): Promi
         checklistTotal: requiredItems.length,
         checklistDone: requiredItems.filter((c) => c.done).length,
         equipmentCount: equipment.length,
+        equipmentBrief: equipment.map((e) => ({
+          equipmentId: e.equipment_id,
+          variantId: e.variant_id ?? null,
+          qty: e.qty,
+        })),
       };
     }) ?? []
   ) satisfies Event[];
+}
+
+/**
+ * Retorna Set com IDs de OS que têm pelo menos 1 item alocado acima do
+ * estoque disponível para o período. Considera apenas OS em
+ * planning|ready_to_load|in_field (que ocupam estoque).
+ *
+ * Para cada OS ativa: chama getEquipmentAvailability com excludeEventId
+ * (mostra cap real assumindo que esta OS ainda pode pegar o que precisa).
+ * Se qty pedido > availability sobrante de outras OS, marca como oversold.
+ */
+export async function getEventsWithInsufficientStock(
+  organizationId: string,
+  events: Event[]
+): Promise<Set<string>> {
+  const activeStatuses: EventStatus[] = ["planning", "ready_to_load", "in_field"];
+  const candidates = events.filter(
+    (e) =>
+      activeStatuses.includes(e.status) &&
+      (e.equipmentBrief?.length ?? 0) > 0
+  );
+
+  const oversold = new Set<string>();
+
+  await Promise.all(
+    candidates.map(async (ev) => {
+      const avail = await getEquipmentAvailability(
+        organizationId,
+        ev.startDate,
+        ev.endDate,
+        ev.id
+      );
+      for (const item of ev.equipmentBrief ?? []) {
+        const key = availabilityKey(item.equipmentId, item.variantId);
+        const a = avail.get(key);
+        if (!a || item.qty > a.available) {
+          oversold.add(ev.id);
+          break;
+        }
+      }
+    })
+  );
+
+  return oversold;
 }
 
 export async function getEventById(id: string): Promise<EventDetail | null> {
