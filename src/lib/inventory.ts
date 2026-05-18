@@ -404,24 +404,26 @@ export interface EquipmentAvailability {
 }
 
 /**
- * Calcula disponibilidade efetiva PER (equipment, variant) para um período.
- * O Map é chaveado por `availabilityKey(equipmentId, variantId)`:
+ * Calcula disponibilidade efetiva PER (equipment, variant) para um conjunto
+ * de datas específicas. O Map é chaveado por
+ * `availabilityKey(equipmentId, variantId)`:
  *   - sem variante → chave é só o equipmentId
  *   - com variante → "<equipmentId>:<variantId>"
  *
- * Considera "ocupando estoque" eventos com status
- *   planning ∪ ready_to_load ∪ in_field
- * cujas datas se sobrepõem ao intervalo [startDate, endDate].
+ * Conflito = OS ativa (status planning|ready_to_load|in_field) com ao menos
+ * uma `event_dates.date` em comum com `dates`. Não usa o cache
+ * `events.start_date/end_date`, pois multi-data não-consecutiva (ex.: 01/08
+ * + 15/08) gera falsos positivos quando 08/08 cai no meio do range cache.
  *
- * `excludeEventId` permite ignorar a OS atual (para mostrar quanto OUTRAS OS
- * já reservaram, deixando o cap real para a OS sendo editada).
+ * `excludeEventId` ignora a OS atual (mostra o cap real assumindo que
+ * outras OS ficam fixas).
  *
- * Sobreposição: A.start <= B.end AND A.end >= B.start.
+ * Passe `dates: []` para indicar "sem datas" → sem conflitos
+ * (`allocated` = 0 para todas as chaves).
  */
 export async function getEquipmentAvailability(
   organizationId: string,
-  startDate: string,
-  endDate: string,
+  dates: string[],
   excludeEventId?: string
 ): Promise<Map<string, EquipmentAvailability>> {
   const supabase = createSupabaseAdminClient();
@@ -444,32 +446,39 @@ export async function getEquipmentAvailability(
     .eq("organization_id", organizationId);
   if (equipErr) throw equipErr;
 
-  // 2) Alocação por (equipment_id, variant_id) em OS sobrepostas.
-  let allocQuery = supabase
-    .from("event_equipment")
-    .select(
-      `
-      equipment_id, variant_id, qty,
-      events!inner (id, organization_id, status, start_date, end_date)
-    `
-    )
-    .eq("events.organization_id", organizationId)
-    .in("events.status", ["planning", "ready_to_load", "in_field"])
-    .lte("events.start_date", endDate)
-    .gte("events.end_date", startDate);
-
-  if (excludeEventId) {
-    allocQuery = allocQuery.neq("events.id", excludeEventId);
-  }
-
-  const { data: allocData, error: allocErr } = await allocQuery;
-  if (allocErr) throw allocErr;
-
+  // 2) Encontrar IDs de OS que têm ao menos UMA data em comum com `dates`.
+  //    Resolve o false-positive de OS multi-data não-consecutiva.
   const allocMap = new Map<string, number>();
-  for (const row of allocData ?? []) {
-    const key = availabilityKey(row.equipment_id, row.variant_id ?? null);
-    const prev = allocMap.get(key) ?? 0;
-    allocMap.set(key, prev + (row.qty ?? 0));
+
+  if (dates.length > 0) {
+    const { data: overlapData, error: overlapErr } = await supabase
+      .from("event_dates")
+      .select("event_id, events!inner (id, organization_id, status)")
+      .in("date", dates)
+      .eq("events.organization_id", organizationId)
+      .in("events.status", ["planning", "ready_to_load", "in_field"]);
+    if (overlapErr) throw overlapErr;
+
+    const overlappingEventIds = new Set<string>();
+    for (const row of overlapData ?? []) {
+      const rel = (row as unknown as { event_id: string }).event_id;
+      if (excludeEventId && rel === excludeEventId) continue;
+      overlappingEventIds.add(rel);
+    }
+
+    if (overlappingEventIds.size > 0) {
+      const { data: allocData, error: allocErr } = await supabase
+        .from("event_equipment")
+        .select("equipment_id, variant_id, qty")
+        .in("event_id", Array.from(overlappingEventIds));
+      if (allocErr) throw allocErr;
+
+      for (const row of allocData ?? []) {
+        const key = availabilityKey(row.equipment_id, row.variant_id ?? null);
+        const prev = allocMap.get(key) ?? 0;
+        allocMap.set(key, prev + (row.qty ?? 0));
+      }
+    }
   }
 
   const result = new Map<string, EquipmentAvailability>();

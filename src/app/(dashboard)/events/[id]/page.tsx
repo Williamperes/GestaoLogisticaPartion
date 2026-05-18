@@ -81,15 +81,11 @@ export default async function EventDetailPage({ params, searchParams }: EventDet
   const canEditEquipment = canPromote && isReadyToLoad;
 
   const organizationId = context?.primaryOrganization?.id;
+  const eventDateStrings = eventDates.map((d) => d.date);
   const [allEquipment, availabilityMap] = canEditEquipment && organizationId
     ? await Promise.all([
         listEquipment(organizationId),
-        getEquipmentAvailability(
-          organizationId,
-          event.startDate,
-          event.endDate,
-          event.id
-        ),
+        getEquipmentAvailability(organizationId, eventDateStrings, event.id),
       ])
     : [[], new Map()];
 

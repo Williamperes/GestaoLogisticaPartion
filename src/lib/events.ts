@@ -78,6 +78,9 @@ export interface Event {
   checklistDone?: number;
   equipmentCount?: number;
   equipmentBrief?: EventEquipmentBrief[];
+  // Datas reais (não o cache start_date/end_date) usadas para o
+  // overlap exato em getEquipmentAvailability.
+  dates?: string[];
 }
 
 export interface EventEquipmentBrief {
@@ -129,7 +132,8 @@ export async function listEvents(organizationId: string, search?: string): Promi
       strict_venue_hours,
       organizations!events_client_organization_id_fkey (name),
       event_checklist_items (id, done, required),
-      event_equipment (id, equipment_id, variant_id, qty)
+      event_equipment (id, equipment_id, variant_id, qty),
+      event_dates (date)
     `)
     .eq("organization_id", organizationId)
     .order("start_date", { ascending: false });
@@ -154,6 +158,8 @@ export async function listEvents(organizationId: string, search?: string): Promi
           variant_id: string | null;
           qty: number;
         }[]) ?? [];
+      const dates =
+        ((row.event_dates as unknown as { date: string }[]) ?? []).map((d) => d.date);
       const requiredItems = checklist.filter((c) => c.required ?? true);
 
       return {
@@ -191,6 +197,7 @@ export async function listEvents(organizationId: string, search?: string): Promi
           variantId: e.variant_id ?? null,
           qty: e.qty,
         })),
+        dates,
       };
     }) ?? []
   ) satisfies Event[];
@@ -220,12 +227,10 @@ export async function getEventsWithInsufficientStock(
 
   await Promise.all(
     candidates.map(async (ev) => {
-      const avail = await getEquipmentAvailability(
-        organizationId,
-        ev.startDate,
-        ev.endDate,
-        ev.id
-      );
+      const evDates = ev.dates ?? [];
+      // OS sem datas reais: pula (sem como avaliar overlap).
+      if (evDates.length === 0) return;
+      const avail = await getEquipmentAvailability(organizationId, evDates, ev.id);
       for (const item of ev.equipmentBrief ?? []) {
         const key = availabilityKey(item.equipmentId, item.variantId);
         const a = avail.get(key);

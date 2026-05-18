@@ -346,16 +346,22 @@ describe("events actions", () => {
             select: vi.fn().mockReturnValue({
               eq: vi.fn().mockReturnValue({
                 maybeSingle: vi.fn().mockResolvedValue({
-                  data: {
-                    organization_id: "org-1",
-                    start_date: "2025-06-15",
-                    end_date: "2025-06-16",
-                  },
+                  data: { organization_id: "org-1" },
                   error: null,
                 }),
               }),
             }),
             update: updateFn,
+          };
+        }
+        if (table === "event_dates") {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockResolvedValue({
+                data: [{ date: "2025-06-15" }, { date: "2025-06-16" }],
+                error: null,
+              }),
+            }),
           };
         }
         return {};
@@ -824,8 +830,6 @@ describe("events actions", () => {
         id: "event-1",
         organization_id: "org-1",
         status: "planning",
-        start_date: "2026-08-10",
-        end_date: "2026-08-11",
       },
       error: null,
     });
@@ -854,6 +858,16 @@ describe("events actions", () => {
         if (table === "event_equipment") {
           // 1ª chamada select para currentRows, 2ª insert
           return { select: currentFetchSelect, insert: eqInsert };
+        }
+        if (table === "event_dates") {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockResolvedValue({
+                data: [{ date: "2026-08-10" }, { date: "2026-08-11" }],
+                error: null,
+              }),
+            }),
+          };
         }
         return {};
       }),
@@ -916,11 +930,7 @@ describe("events actions", () => {
             select: vi.fn().mockReturnValue({
               eq: vi.fn().mockReturnValue({
                 maybeSingle: vi.fn().mockResolvedValue({
-                  data: {
-                    organization_id: "org-1",
-                    start_date: "2026-08-10",
-                    end_date: "2026-08-11",
-                  },
+                  data: { organization_id: "org-1" },
                   error: null,
                 }),
               }),
@@ -944,6 +954,16 @@ describe("events actions", () => {
                   ],
                   error: null,
                 }),
+              }),
+            }),
+          };
+        }
+        if (table === "event_dates") {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockResolvedValue({
+                data: [{ date: "2026-08-10" }, { date: "2026-08-11" }],
+                error: null,
               }),
             }),
           };

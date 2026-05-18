@@ -243,12 +243,13 @@ export async function promoteToReadyToLoad(formData: FormData) {
   // Validação de estoque: nenhuma OS pode ser promovida com overbooking.
   const { data: eventRow, error: eventFetchErr } = await supabase
     .from("events")
-    .select("organization_id, start_date, end_date")
+    .select("organization_id")
     .eq("id", eventId)
     .maybeSingle();
   if (eventFetchErr || !eventRow || eventRow.organization_id !== organizationId) {
     redirect(`/events/${eventId}?error=Evento inválido.`);
   }
+  const eventDates = await getEventDateList(supabase, eventId);
 
   const { data: equipRows, error: equipFetchErr } = await supabase
     .from("event_equipment")
@@ -274,8 +275,7 @@ export async function promoteToReadyToLoad(formData: FormData) {
   if (desiredByKey.size > 0) {
     const availability = await getEquipmentAvailability(
       organizationId,
-      eventRow.start_date,
-      eventRow.end_date,
+      eventDates,
       eventId
     );
     const oversold: { name: string; qty: number; available: number }[] = [];
@@ -398,12 +398,13 @@ export async function setEventEquipmentBatch(formData: FormData) {
   // Confirma que o evento pertence à org do usuário
   const { data: eventRow, error: eventErr } = await supabase
     .from("events")
-    .select("id, organization_id, status, start_date, end_date")
+    .select("id, organization_id, status")
     .eq("id", eventId)
     .maybeSingle();
   if (eventErr || !eventRow || eventRow.organization_id !== organizationId) {
     redirect(`/events/${eventId}?error=Evento inválido.`);
   }
+  const eventDates = await getEventDateList(supabase, eventId);
 
   // Confirma que todos os equipamentos solicitados são da mesma org
   const equipmentIds = Array.from(new Set(Array.from(desired.values()).map((d) => d.equipmentId)));
@@ -444,8 +445,7 @@ export async function setEventEquipmentBatch(formData: FormData) {
   // - outros    : hard block.
   const availability = await getEquipmentAvailability(
     organizationId,
-    eventRow.start_date,
-    eventRow.end_date,
+    eventDates,
     eventId
   );
 
@@ -715,6 +715,18 @@ export async function updateEventDetails(formData: FormData) {
 // ──────────────────────────────────────────────────────────────────
 
 type SupabaseClient = ReturnType<typeof createSupabaseAdminClient>;
+
+async function getEventDateList(
+  supabase: SupabaseClient,
+  eventId: string
+): Promise<string[]> {
+  const { data, error } = await supabase
+    .from("event_dates")
+    .select("date")
+    .eq("event_id", eventId);
+  if (error) return [];
+  return (data ?? []).map((r) => (r as { date: string }).date);
+}
 
 async function assertEventInOrg(
   supabase: SupabaseClient,
