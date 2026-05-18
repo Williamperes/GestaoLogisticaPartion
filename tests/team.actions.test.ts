@@ -79,7 +79,7 @@ describe("team actions", () => {
     });
 
     await expect(createTeamMember(formData)).rejects.toThrow(
-      "NEXT_REDIRECT:/team?success=Técnico cadastrado."
+      `NEXT_REDIRECT:/team?success=${encodeURIComponent("Técnico cadastrado.")}`
     );
 
     expect(mocks.ensureTeamSpecialty).toHaveBeenCalledWith("org-1", "Equipe");
@@ -122,7 +122,9 @@ describe("team actions", () => {
           notes: "Plantao noturno",
         })
       )
-    ).rejects.toThrow("NEXT_REDIRECT:/team?success=Técnico atualizado.");
+    ).rejects.toThrow(
+      `NEXT_REDIRECT:/team?success=${encodeURIComponent("Técnico atualizado.")}`
+    );
 
     expect(update).toHaveBeenCalledWith({
       name: "Camila Souza",
@@ -152,7 +154,7 @@ describe("team actions", () => {
     });
 
     await expect(deleteTeamMember(buildFormData({ id: "member-1" }))).rejects.toThrow(
-      "NEXT_REDIRECT:/team?success=Técnico apagado."
+      `NEXT_REDIRECT:/team?success=${encodeURIComponent("Técnico apagado.")}`
     );
 
     expect(deleteFn).toHaveBeenCalled();
