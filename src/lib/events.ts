@@ -1,6 +1,10 @@
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 import type { ChecklistSection } from "@/lib/checklist-templates";
 import { getEquipmentAvailability, availabilityKey } from "@/lib/inventory";
+import type { EventExtra, EventExtraKind, EventSpeaker } from "@/lib/event-aux";
+
+export type { EventExtra, EventExtraKind, EventSpeaker } from "@/lib/event-aux";
+export { EVENT_EXTRA_KIND_LABELS } from "@/lib/event-aux";
 
 // ──────────────────────────────────────────────────────────────────
 // Types
@@ -85,6 +89,8 @@ export interface EventEquipmentBrief {
 export interface EventDetail extends Event {
   checklist: EventChecklistItem[];
   equipment: EventEquipmentItem[];
+  speakers: EventSpeaker[];
+  extras: EventExtra[];
 }
 
 // ──────────────────────────────────────────────────────────────────
@@ -256,6 +262,15 @@ export async function getEventById(id: string): Promise<EventDetail | null> {
         equipment (id, name),
         equipment_units (id, serial, status),
         equipment_variants (id, label)
+      ),
+      event_speakers (
+        id, event_id, name, organization,
+        needs_mic, needs_notebook, needs_adapter, needs_dedicated_tech,
+        notes, position
+      ),
+      event_extras (
+        id, event_id, kind, description, qty, supplier, unit_price_cents,
+        notes, position
       )
     `)
     .eq("id", id)
@@ -283,6 +298,21 @@ export async function getEventById(id: string): Promise<EventDetail | null> {
       equipment: { id: string; name: string };
       equipment_units: { id: string; serial: string; status: string } | null;
       equipment_variants: { id: string; label: string } | null;
+    }[]
+  ) ?? [];
+  const speakerRows = (
+    data.event_speakers as unknown as {
+      id: string; event_id: string; name: string; organization: string | null;
+      needs_mic: boolean; needs_notebook: boolean; needs_adapter: boolean;
+      needs_dedicated_tech: boolean;
+      notes: string | null; position: number;
+    }[]
+  ) ?? [];
+  const extraRows = (
+    data.event_extras as unknown as {
+      id: string; event_id: string; kind: EventExtraKind; description: string;
+      qty: number; supplier: string | null; unit_price_cents: number | null;
+      notes: string | null; position: number;
     }[]
   ) ?? [];
 
@@ -350,6 +380,35 @@ export async function getEventById(id: string): Promise<EventDetail | null> {
       loadedBy: e.loaded_by,
       notes: e.notes,
     })),
+    speakers: speakerRows
+      .slice()
+      .sort((a, b) => a.position - b.position)
+      .map((s) => ({
+        id: s.id,
+        eventId: s.event_id,
+        name: s.name,
+        organization: s.organization,
+        needsMic: s.needs_mic,
+        needsNotebook: s.needs_notebook,
+        needsAdapter: s.needs_adapter,
+        needsDedicatedTech: s.needs_dedicated_tech,
+        notes: s.notes,
+        position: s.position,
+      })),
+    extras: extraRows
+      .slice()
+      .sort((a, b) => a.position - b.position)
+      .map((x) => ({
+        id: x.id,
+        eventId: x.event_id,
+        kind: x.kind,
+        description: x.description,
+        qty: x.qty,
+        supplier: x.supplier,
+        unitPriceCents: x.unit_price_cents,
+        notes: x.notes,
+        position: x.position,
+      })),
   };
 }
 

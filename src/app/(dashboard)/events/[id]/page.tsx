@@ -39,6 +39,8 @@ import {
 import { AddEquipmentSheet } from "@/app/(dashboard)/events/[id]/AddEquipmentSheet";
 import { EditEventDetailsSheet } from "@/app/(dashboard)/events/[id]/EditEventDetailsSheet";
 import { EventDatesPanel } from "@/app/(dashboard)/events/[id]/EventDatesPanel";
+import { SpeakersPanel } from "@/app/(dashboard)/events/[id]/SpeakersPanel";
+import { ExtrasPanel } from "@/app/(dashboard)/events/[id]/ExtrasPanel";
 
 interface EventDetailPageProps {
   params: Promise<{ id: string }>;
@@ -228,6 +230,14 @@ export default async function EventDetailPage({ params, searchParams }: EventDet
             {!equipmentLocked && (
               <span className="ml-1.5 rounded-full bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-bold text-amber-600">
                 {event.equipment.length}
+              </span>
+            )}
+          </TabsTrigger>
+          <TabsTrigger value="extras">
+            Convidados &amp; Extras
+            {(event.speakers.length + event.extras.length) > 0 && (
+              <span className="ml-1.5 rounded-full bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-bold text-amber-600">
+                {event.speakers.length + event.extras.length}
               </span>
             )}
           </TabsTrigger>
@@ -597,6 +607,20 @@ export default async function EventDetailPage({ params, searchParams }: EventDet
               </div>
             </>
           )}
+        </TabsContent>
+
+        {/* ── TAB: Convidados & Extras ── */}
+        <TabsContent value="extras" className="mt-4 space-y-4">
+          <SpeakersPanel
+            eventId={event.id}
+            speakers={event.speakers}
+            canEdit={canPromote}
+          />
+          <ExtrasPanel
+            eventId={event.id}
+            extras={event.extras}
+            canEdit={canPromote}
+          />
         </TabsContent>
       </Tabs>
     </div>

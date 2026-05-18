@@ -1077,3 +1077,272 @@ export async function removeEventDateTeamMember(formData: FormData) {
   revalidatePath(`/events/${eventId}`);
   redirect(`/events/${eventId}?success=Pessoa removida da escala.`);
 }
+
+// ──────────────────────────────────────────────────────────────────
+// Speakers (palestrantes/artistas da OS)
+// ──────────────────────────────────────────────────────────────────
+
+async function resolveSpeaker(
+  supabase: SupabaseClient,
+  speakerId: string,
+  organizationId: string
+): Promise<{ eventId: string }> {
+  const { data, error } = await supabase
+    .from("event_speakers")
+    .select("id, event_id, events!inner (organization_id)")
+    .eq("id", speakerId)
+    .maybeSingle();
+  if (error || !data) {
+    redirect(`/events?error=Palestrante inválido.`);
+  }
+  const eventRel = (data as unknown as { events: { organization_id: string } | null }).events;
+  if (!eventRel || eventRel.organization_id !== organizationId) {
+    redirect(`/events?error=Palestrante inválido.`);
+  }
+  return { eventId: (data as { event_id: string }).event_id };
+}
+
+export async function addEventSpeaker(formData: FormData) {
+  const context = await requireWriteRole();
+  const organizationId = context.primaryOrganization?.id;
+  if (!organizationId) redirect("/dashboard?error=organization_not_found");
+
+  const eventId = String(formData.get("eventId") ?? "").trim();
+  const name = String(formData.get("name") ?? "").trim();
+  if (!eventId || !name) {
+    redirect(`/events/${eventId}?error=Nome do palestrante obrigatório.`);
+  }
+
+  const supabase = createSupabaseAdminClient();
+  await assertEventInOrg(supabase, eventId, organizationId);
+
+  const positionRaw = parseInt(String(formData.get("position") ?? "0"), 10);
+  const position = isNaN(positionRaw) ? 0 : positionRaw;
+
+  const { error } = await supabase.from("event_speakers").insert({
+    event_id: eventId,
+    name,
+    organization: String(formData.get("organization") ?? "").trim() || null,
+    needs_mic: formData.get("needsMic") === "on",
+    needs_notebook: formData.get("needsNotebook") === "on",
+    needs_adapter: formData.get("needsAdapter") === "on",
+    needs_dedicated_tech: formData.get("needsDedicatedTech") === "on",
+    notes: String(formData.get("notes") ?? "").trim() || null,
+    position,
+  });
+
+  if (error) {
+    redirect(`/events/${eventId}?error=${encodeURIComponent(error.message)}`);
+  }
+
+  revalidatePath(`/events/${eventId}`);
+  redirect(`/events/${eventId}?success=Palestrante adicionado.`);
+}
+
+export async function updateEventSpeaker(formData: FormData) {
+  const context = await requireWriteRole();
+  const organizationId = context.primaryOrganization?.id;
+  if (!organizationId) redirect("/dashboard?error=organization_not_found");
+
+  const speakerId = String(formData.get("speakerId") ?? "").trim();
+  if (!speakerId) redirect("/events?error=Palestrante inválido.");
+
+  const supabase = createSupabaseAdminClient();
+  const { eventId } = await resolveSpeaker(supabase, speakerId, organizationId);
+
+  const name = String(formData.get("name") ?? "").trim();
+  if (!name) {
+    redirect(`/events/${eventId}?error=Nome do palestrante obrigatório.`);
+  }
+
+  const { error } = await supabase
+    .from("event_speakers")
+    .update({
+      name,
+      organization: String(formData.get("organization") ?? "").trim() || null,
+      needs_mic: formData.get("needsMic") === "on",
+      needs_notebook: formData.get("needsNotebook") === "on",
+      needs_adapter: formData.get("needsAdapter") === "on",
+      needs_dedicated_tech: formData.get("needsDedicatedTech") === "on",
+      notes: String(formData.get("notes") ?? "").trim() || null,
+    })
+    .eq("id", speakerId);
+
+  if (error) {
+    redirect(`/events/${eventId}?error=${encodeURIComponent(error.message)}`);
+  }
+
+  revalidatePath(`/events/${eventId}`);
+  redirect(`/events/${eventId}?success=Palestrante atualizado.`);
+}
+
+export async function removeEventSpeaker(formData: FormData) {
+  const context = await requireWriteRole();
+  const organizationId = context.primaryOrganization?.id;
+  if (!organizationId) redirect("/dashboard?error=organization_not_found");
+
+  const speakerId = String(formData.get("speakerId") ?? "").trim();
+  if (!speakerId) redirect("/events?error=Palestrante inválido.");
+
+  const supabase = createSupabaseAdminClient();
+  const { eventId } = await resolveSpeaker(supabase, speakerId, organizationId);
+
+  const { error } = await supabase
+    .from("event_speakers")
+    .delete()
+    .eq("id", speakerId);
+
+  if (error) {
+    redirect(`/events/${eventId}?error=${encodeURIComponent(error.message)}`);
+  }
+
+  revalidatePath(`/events/${eventId}`);
+  redirect(`/events/${eventId}?success=Palestrante removido.`);
+}
+
+// ──────────────────────────────────────────────────────────────────
+// Extras (itens contratados externamente: gerador, palco, etc.)
+// ──────────────────────────────────────────────────────────────────
+
+const EXTRA_KINDS = [
+  "generator",
+  "box_truss",
+  "tv",
+  "projector",
+  "stage",
+  "other",
+] as const;
+type ExtraKind = (typeof EXTRA_KINDS)[number];
+
+function parseExtraKind(raw: string): ExtraKind | null {
+  return (EXTRA_KINDS as readonly string[]).includes(raw) ? (raw as ExtraKind) : null;
+}
+
+async function resolveExtra(
+  supabase: SupabaseClient,
+  extraId: string,
+  organizationId: string
+): Promise<{ eventId: string }> {
+  const { data, error } = await supabase
+    .from("event_extras")
+    .select("id, event_id, events!inner (organization_id)")
+    .eq("id", extraId)
+    .maybeSingle();
+  if (error || !data) {
+    redirect(`/events?error=Extra inválido.`);
+  }
+  const eventRel = (data as unknown as { events: { organization_id: string } | null }).events;
+  if (!eventRel || eventRel.organization_id !== organizationId) {
+    redirect(`/events?error=Extra inválido.`);
+  }
+  return { eventId: (data as { event_id: string }).event_id };
+}
+
+function parseUnitPriceCents(raw: string): number | null {
+  if (!raw.trim()) return null;
+  const value = parseFloat(raw.replace(",", "."));
+  if (isNaN(value) || value < 0) return null;
+  return Math.round(value * 100);
+}
+
+export async function addEventExtra(formData: FormData) {
+  const context = await requireWriteRole();
+  const organizationId = context.primaryOrganization?.id;
+  if (!organizationId) redirect("/dashboard?error=organization_not_found");
+
+  const eventId = String(formData.get("eventId") ?? "").trim();
+  const kind = parseExtraKind(String(formData.get("kind") ?? "").trim());
+  const description = String(formData.get("description") ?? "").trim();
+  if (!eventId || !kind || !description) {
+    redirect(`/events/${eventId}?error=Dados do extra inválidos.`);
+  }
+
+  const supabase = createSupabaseAdminClient();
+  await assertEventInOrg(supabase, eventId, organizationId);
+
+  const qtyRaw = parseInt(String(formData.get("qty") ?? "1"), 10);
+  const qty = isNaN(qtyRaw) || qtyRaw < 1 ? 1 : qtyRaw;
+  const positionRaw = parseInt(String(formData.get("position") ?? "0"), 10);
+  const position = isNaN(positionRaw) ? 0 : positionRaw;
+
+  const { error } = await supabase.from("event_extras").insert({
+    event_id: eventId,
+    kind,
+    description,
+    qty,
+    supplier: String(formData.get("supplier") ?? "").trim() || null,
+    unit_price_cents: parseUnitPriceCents(String(formData.get("unitPrice") ?? "")),
+    notes: String(formData.get("notes") ?? "").trim() || null,
+    position,
+  });
+
+  if (error) {
+    redirect(`/events/${eventId}?error=${encodeURIComponent(error.message)}`);
+  }
+
+  revalidatePath(`/events/${eventId}`);
+  redirect(`/events/${eventId}?success=Extra adicionado.`);
+}
+
+export async function updateEventExtra(formData: FormData) {
+  const context = await requireWriteRole();
+  const organizationId = context.primaryOrganization?.id;
+  if (!organizationId) redirect("/dashboard?error=organization_not_found");
+
+  const extraId = String(formData.get("extraId") ?? "").trim();
+  if (!extraId) redirect("/events?error=Extra inválido.");
+
+  const supabase = createSupabaseAdminClient();
+  const { eventId } = await resolveExtra(supabase, extraId, organizationId);
+
+  const kind = parseExtraKind(String(formData.get("kind") ?? "").trim());
+  const description = String(formData.get("description") ?? "").trim();
+  if (!kind || !description) {
+    redirect(`/events/${eventId}?error=Dados do extra inválidos.`);
+  }
+  const qtyRaw = parseInt(String(formData.get("qty") ?? "1"), 10);
+  const qty = isNaN(qtyRaw) || qtyRaw < 1 ? 1 : qtyRaw;
+
+  const { error } = await supabase
+    .from("event_extras")
+    .update({
+      kind,
+      description,
+      qty,
+      supplier: String(formData.get("supplier") ?? "").trim() || null,
+      unit_price_cents: parseUnitPriceCents(String(formData.get("unitPrice") ?? "")),
+      notes: String(formData.get("notes") ?? "").trim() || null,
+    })
+    .eq("id", extraId);
+
+  if (error) {
+    redirect(`/events/${eventId}?error=${encodeURIComponent(error.message)}`);
+  }
+
+  revalidatePath(`/events/${eventId}`);
+  redirect(`/events/${eventId}?success=Extra atualizado.`);
+}
+
+export async function removeEventExtra(formData: FormData) {
+  const context = await requireWriteRole();
+  const organizationId = context.primaryOrganization?.id;
+  if (!organizationId) redirect("/dashboard?error=organization_not_found");
+
+  const extraId = String(formData.get("extraId") ?? "").trim();
+  if (!extraId) redirect("/events?error=Extra inválido.");
+
+  const supabase = createSupabaseAdminClient();
+  const { eventId } = await resolveExtra(supabase, extraId, organizationId);
+
+  const { error } = await supabase
+    .from("event_extras")
+    .delete()
+    .eq("id", extraId);
+
+  if (error) {
+    redirect(`/events/${eventId}?error=${encodeURIComponent(error.message)}`);
+  }
+
+  revalidatePath(`/events/${eventId}`);
+  redirect(`/events/${eventId}?success=Extra removido.`);
+}
