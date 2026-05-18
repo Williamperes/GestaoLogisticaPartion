@@ -93,6 +93,17 @@ export function availabilityKey(
   return variantId ? `${equipmentId}:${variantId}` : equipmentId;
 }
 
+export interface EquipmentAllocation {
+  eventId: string;
+  eventName: string;
+  eventStatus: "planning" | "ready_to_load" | "in_field" | "completed" | "cancelled";
+  startDate: string;
+  endDate: string;
+  variantId: string | null;
+  variantLabel: string | null;
+  qty: number;
+}
+
 // ──────────────────────────────────────────────────────────────────
 // Fetch helpers
 // ──────────────────────────────────────────────────────────────────
@@ -497,6 +508,73 @@ export async function getEquipmentAvailability(
   }
 
   return result;
+}
+
+/**
+ * Lista OS que estão alocando este equipamento, agrupado por
+ * (eventId, variantId). Padrão filtra apenas status ativos
+ * (planning|ready_to_load|in_field). Inclua completed/cancelled
+ * passando includeInactive=true.
+ *
+ * Ordenado por startDate desc (mais recente primeiro).
+ */
+export async function getEquipmentAllocations(
+  equipmentId: string,
+  options: { includeInactive?: boolean } = {}
+): Promise<EquipmentAllocation[]> {
+  const supabase = createSupabaseAdminClient();
+
+  let query = supabase
+    .from("event_equipment")
+    .select(
+      `
+      qty, variant_id,
+      equipment_variants (label),
+      events!inner (id, name, status, start_date, end_date)
+      `
+    )
+    .eq("equipment_id", equipmentId);
+
+  if (!options.includeInactive) {
+    query = query.in("events.status", ["planning", "ready_to_load", "in_field"]);
+  }
+
+  const { data, error } = await query;
+  if (error) throw error;
+
+  type Row = {
+    qty: number;
+    variant_id: string | null;
+    equipment_variants: { label: string } | null;
+    events: {
+      id: string;
+      name: string;
+      status: EquipmentAllocation["eventStatus"];
+      start_date: string;
+      end_date: string;
+    };
+  };
+
+  const grouped = new Map<string, EquipmentAllocation>();
+  for (const row of (data as unknown as Row[]) ?? []) {
+    const key = `${row.events.id}:${row.variant_id ?? ""}`;
+    const prev = grouped.get(key);
+    const qty = (prev?.qty ?? 0) + (row.qty ?? 0);
+    grouped.set(key, {
+      eventId: row.events.id,
+      eventName: row.events.name,
+      eventStatus: row.events.status,
+      startDate: row.events.start_date,
+      endDate: row.events.end_date,
+      variantId: row.variant_id,
+      variantLabel: row.equipment_variants?.label ?? null,
+      qty,
+    });
+  }
+
+  return Array.from(grouped.values()).sort((a, b) =>
+    b.startDate.localeCompare(a.startDate)
+  );
 }
 
 // ──────────────────────────────────────────────────────────────────

@@ -1,10 +1,11 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { ChevronRight, Package } from "lucide-react";
+import { CalendarClock, ChevronRight, Package } from "lucide-react";
 
 import { getCurrentUserContext } from "@/lib/auth/session";
 import {
   getEquipmentById,
+  getEquipmentAllocations,
   listEquipmentCategories,
   formatPurchaseValue,
 } from "@/lib/inventory";
@@ -33,9 +34,12 @@ export default async function InventoryDetailPage({ params, searchParams }: Prop
 
   if (!equipment) redirect("/inventory");
 
-  const categories = context?.primaryOrganization?.id
-    ? await listEquipmentCategories(context.primaryOrganization.id)
-    : [];
+  const [categories, allocations] = await Promise.all([
+    context?.primaryOrganization?.id
+      ? listEquipmentCategories(context.primaryOrganization.id)
+      : Promise.resolve([]),
+    getEquipmentAllocations(equipment.id),
+  ]);
 
   const canWrite = ["super_admin", "admin", "operations", "warehouse"].includes(
     context?.role ?? ""
@@ -276,6 +280,77 @@ export default async function InventoryDetailPage({ params, searchParams }: Prop
           )}
         </div>
       )}
+
+      {/* OSes alocando este equipamento (status ativo) */}
+      <div className="overflow-hidden rounded-xl border border-border bg-card">
+        <div className="flex items-center justify-between border-b border-border px-5 py-3.5">
+          <h2 className="flex items-center gap-2 text-sm font-semibold">
+            <CalendarClock className="h-4 w-4 text-amber-600" />
+            Em uso por OS ({allocations.length})
+          </h2>
+        </div>
+        {allocations.length === 0 ? (
+          <div className="px-5 py-8 text-center text-sm text-muted-foreground">
+            Nenhuma OS ativa está usando este equipamento.
+          </div>
+        ) : (
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-border">
+                <th className="px-5 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  OS
+                </th>
+                <th className="hidden px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground md:table-cell">
+                  Período
+                </th>
+                <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Variante
+                </th>
+                <th className="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Qtd
+                </th>
+                <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Status
+                </th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {allocations.map((a) => (
+                <tr
+                  key={`${a.eventId}:${a.variantId ?? "none"}`}
+                  className="group transition-colors hover:bg-black/2"
+                >
+                  <td className="px-5 py-3">
+                    <Link
+                      href={`/events/${a.eventId}`}
+                      className="font-medium transition-colors group-hover:text-amber-600"
+                    >
+                      {a.eventName}
+                    </Link>
+                  </td>
+                  <td className="hidden px-4 py-3 text-xs text-muted-foreground md:table-cell">
+                    {formatDateBR(a.startDate)}
+                    {a.endDate !== a.startDate && <> — {formatDateBR(a.endDate)}</>}
+                  </td>
+                  <td className="px-4 py-3 text-xs">
+                    {a.variantLabel ? (
+                      <span className="inline-flex items-center rounded-md border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 font-medium text-amber-700">
+                        {a.variantLabel}
+                      </span>
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-right font-mono text-xs">{a.qty}</td>
+                  <td className="px-4 py-3">
+                    <StatusBadge status={a.eventStatus} type="event" />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
 
     </div>
   );
