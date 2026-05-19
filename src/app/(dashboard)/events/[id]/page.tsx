@@ -201,7 +201,7 @@ export default async function EventDetailPage({ params, searchParams }: EventDet
       </div>
 
       <Tabs defaultValue="checklist">
-        <TabsList className="max-w-full overflow-x-auto border border-border bg-card">
+        <TabsList className="w-fit self-start max-w-full overflow-x-auto border border-border bg-card">
           <TabsTrigger value="overview">Visão Geral</TabsTrigger>
           <TabsTrigger value="dates">
             Datas &amp; Escala
