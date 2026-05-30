@@ -148,6 +148,20 @@ export default async function EventDetailPage({ params, searchParams }: EventDet
 
         {/* Right column: edit + gate widget */}
         <div className="flex w-full shrink-0 flex-col gap-2 md:w-60">
+        <div className="flex flex-wrap gap-2">
+          <Link
+            href={`/scan/load/${event.id}`}
+            className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl bg-amber-500 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-amber-600"
+          >
+            Bipar carregamento
+          </Link>
+          <Link
+            href={`/scan/return/${event.id}`}
+            className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl border border-border bg-card px-4 py-2 text-sm font-semibold text-foreground hover:bg-muted"
+          >
+            Bipar retorno
+          </Link>
+        </div>
         {canPromote && <EditEventDetailsSheet event={event} clients={clients} />}
         <div
           className={`w-full shrink-0 rounded-xl border p-4 ${
