@@ -12,6 +12,7 @@ import {
 import { formatDateBR } from "@/lib/dates";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { DeleteConfirmDialog } from "@/components/ui/delete-confirm-dialog";
+import { QrCodeDisplay } from "@/components/inventory/QrCodeDisplay";
 import { deleteEquipmentUnit } from "@/app/(dashboard)/inventory/actions";
 
 import { EditEquipmentSheet } from "@/app/(dashboard)/inventory/[id]/EditEquipmentSheet";
@@ -210,6 +211,9 @@ export default async function InventoryDetailPage({ params, searchParams }: Prop
                   <th className="hidden px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground md:table-cell">
                     Patrimônio
                   </th>
+                  <th className="hidden px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground md:table-cell">
+                    QR Code
+                  </th>
                   <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                     Status
                   </th>
@@ -222,6 +226,20 @@ export default async function InventoryDetailPage({ params, searchParams }: Prop
                     <td className="px-5 py-3 font-mono text-xs">{unit.serial}</td>
                     <td className="hidden px-4 py-3 font-mono text-xs text-muted-foreground md:table-cell">
                       {unit.patrimony ?? "—"}
+                    </td>
+                    <td className="hidden px-4 py-3 md:table-cell">
+                      {unit.qrCode ? (
+                        <div className="flex items-center gap-3">
+                          <QrCodeDisplay value={unit.qrCode} size={48} />
+                          <code className="font-mono text-xs text-muted-foreground">
+                            {unit.qrCode}
+                          </code>
+                        </div>
+                      ) : (
+                        <span className="text-xs italic text-muted-foreground">
+                          Sem QR
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-3">
                       {canWrite ? (
