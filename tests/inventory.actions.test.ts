@@ -38,6 +38,7 @@ import {
   updateEquipmentVariant,
   deleteEquipmentVariant,
   updateBulkInventoryVariant,
+  setUnitQrCode,
 } from "@/app/(dashboard)/inventory/actions";
 
 function buildFormData(values: Record<string, string>) {
@@ -324,6 +325,61 @@ describe("inventory actions", () => {
       await expect(
         addEquipmentUnit(buildFormData({ equipmentId: "equip-1", serial: "" }))
       ).rejects.toThrow("NEXT_REDIRECT:/inventory/equip-1?error=Número de série é obrigatório.");
+    });
+  });
+
+  // ── setUnitQrCode ─────────────────────────────────────────────────
+
+  describe("setUnitQrCode", () => {
+    it("vincula QR ao update + revalida path", async () => {
+      const maybeSingle = vi.fn().mockResolvedValue({
+        data: { id: "u1", equipment_id: "eq-1" },
+        error: null,
+      });
+      const selectFn = vi.fn().mockReturnValue({ maybeSingle });
+      const eqFn = vi.fn().mockReturnValue({ select: selectFn });
+      const updateFn = vi.fn().mockReturnValue({ eq: eqFn });
+      mocks.createSupabaseAdminClient.mockReturnValue({
+        from: vi.fn(() => ({ update: updateFn })),
+      });
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+
+      const result = await setUnitQrCode("u1", "QR-001");
+      expect(result.ok).toBe(true);
+      expect(updateFn).toHaveBeenCalledWith({ qr_code: "QR-001" });
+      expect(mocks.revalidatePath).toHaveBeenCalledWith("/inventory/eq-1");
+    });
+
+    it("rejeita QR duplicado (23505)", async () => {
+      const maybeSingle = vi.fn().mockResolvedValue({
+        data: null,
+        error: { code: "23505", message: "duplicate" },
+      });
+      const selectFn = vi.fn().mockReturnValue({ maybeSingle });
+      const eqFn = vi.fn().mockReturnValue({ select: selectFn });
+      const updateFn = vi.fn().mockReturnValue({ eq: eqFn });
+      mocks.createSupabaseAdminClient.mockReturnValue({
+        from: vi.fn(() => ({ update: updateFn })),
+      });
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+
+      const result = await setUnitQrCode("u1", "QR-DUP");
+      expect(result.ok).toBe(false);
+      expect(result.error).toMatch(/já está vinculado/i);
+    });
+
+    it("rejeita sem permissão", async () => {
+      mocks.getCurrentUserContext.mockResolvedValue({ role: "viewer" });
+      const result = await setUnitQrCode("u1", "QR");
+      expect(result.ok).toBe(false);
+      expect(result.error).toMatch(/permissão/i);
+    });
+
+    it("rejeita QR vazio", async () => {
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+      const result = await setUnitQrCode("u1", "   ");
+      expect(result.ok).toBe(false);
+      expect(result.error).toMatch(/vazio/i);
     });
   });
 

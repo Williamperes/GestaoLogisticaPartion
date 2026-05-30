@@ -193,9 +193,20 @@ export function InventorySheet({ categories }: InventorySheetProps) {
                 </div>
                 <div className="grid gap-4 sm:grid-cols-2">
                   <label className={LABEL_CLASS}>
+                    <span className={LABEL_TEXT_CLASS}>QR Code (opcional)</span>
+                    <input
+                      name="qrCode"
+                      placeholder="Bipe ou digite o código"
+                      disabled={hasVariants}
+                      className={INPUT_CLASS}
+                    />
+                  </label>
+                  <label className={LABEL_CLASS}>
                     <span className={LABEL_TEXT_CLASS}>Data de aquisição</span>
                     <input name="purchaseDate" type="date" className={INPUT_CLASS} />
                   </label>
+                </div>
+                <div className="grid gap-4 sm:grid-cols-2">
                   <label className={LABEL_CLASS}>
                     <span className={LABEL_TEXT_CLASS}>Valor de aquisição (R$)</span>
                     <input

@@ -469,8 +469,9 @@ export async function getEquipmentAvailability(
     if (overlappingEventIds.size > 0) {
       const { data: allocData, error: allocErr } = await supabase
         .from("event_equipment")
-        .select("equipment_id, variant_id, qty")
-        .in("event_id", Array.from(overlappingEventIds));
+        .select("equipment_id, variant_id, qty, returned_at")
+        .in("event_id", Array.from(overlappingEventIds))
+        .is("returned_at", null);
       if (allocErr) throw allocErr;
 
       for (const row of allocData ?? []) {
@@ -609,4 +610,49 @@ export function formatPurchaseValue(cents: number | null): string {
 /** Gera um QR code token único para um equipamento/unit */
 export function generateQrToken(prefix: string, id: string): string {
   return `PTN-${prefix.toUpperCase()}-${id.replace(/-/g, "").slice(0, 12).toUpperCase()}`;
+}
+
+// ──────────────────────────────────────────────────────────────────
+// QR Code resolution
+// ──────────────────────────────────────────────────────────────────
+
+export interface EquipmentUnitLookup {
+  id: string;
+  equipmentId: string;
+  organizationId: string;
+  variantId: string | null;
+  status: EquipmentStatus;
+}
+
+export async function getEquipmentUnitByQrCode(
+  qrCode: string
+): Promise<EquipmentUnitLookup | null> {
+  const supabase = createSupabaseAdminClient();
+  const { data, error } = await supabase
+    .from("equipment_units")
+    .select(
+      `id, equipment_id, variant_id, status,
+       equipment (organization_id)`
+    )
+    .eq("qr_code", qrCode)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+
+  const row = data as unknown as {
+    id: string;
+    equipment_id: string;
+    variant_id: string | null;
+    status: EquipmentStatus;
+    equipment: { organization_id: string } | null;
+  };
+
+  if (!row.equipment) return null;
+  return {
+    id: row.id,
+    equipmentId: row.equipment_id,
+    organizationId: row.equipment.organization_id,
+    variantId: row.variant_id,
+    status: row.status,
+  };
 }
