@@ -22,6 +22,17 @@ export function QrScanner({ onResult, onError, pauseAfterScanMs = 1500 }: QrScan
     let lastEmitAt = 0;
     const videoEl = videoRef.current;
 
+    // Erros emitidos por frame quando o reader não consegue decodificar
+    // são esperados (câmera apontada pra qualquer coisa que não é QR).
+    // Só propagar erros estruturais — não os transient de decode.
+    const TRANSIENT_DECODE_ERRORS = new Set([
+      "NotFoundException",
+      "ChecksumException",
+      "FormatException",
+      "ReaderException",
+    ]);
+    const TRANSIENT_MSG_RE = /no\s+multi\s*format\s+readers|not\s*found|no\s+code\s+found/i;
+
     reader
       .decodeFromVideoDevice(undefined, videoEl, (result, err) => {
         if (stopped) return;
@@ -30,7 +41,9 @@ export function QrScanner({ onResult, onError, pauseAfterScanMs = 1500 }: QrScan
           if (now - lastEmitAt < pauseAfterScanMs) return;
           lastEmitAt = now;
           onResult(result.getText());
-        } else if (err && err.name !== "NotFoundException") {
+        } else if (err) {
+          if (TRANSIENT_DECODE_ERRORS.has(err.name)) return;
+          if (TRANSIENT_MSG_RE.test(err.message ?? "")) return;
           onError?.(err);
         }
       })
