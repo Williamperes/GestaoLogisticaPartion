@@ -212,7 +212,7 @@ export default async function InventoryDetailPage({ params, searchParams }: Prop
                   <th className="hidden px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground md:table-cell">
                     Patrimônio
                   </th>
-                  <th className="hidden px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground md:table-cell">
+                  <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                     QR Code
                   </th>
                   <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -228,11 +228,11 @@ export default async function InventoryDetailPage({ params, searchParams }: Prop
                     <td className="hidden px-4 py-3 font-mono text-xs text-muted-foreground md:table-cell">
                       {unit.patrimony ?? "—"}
                     </td>
-                    <td className="hidden px-4 py-3 md:table-cell">
+                    <td className="px-4 py-3">
                       {unit.qrCode ? (
-                        <div className="flex items-center gap-3">
-                          <QrCodeDisplay value={unit.qrCode} size={48} />
-                          <code className="font-mono text-xs text-muted-foreground">
+                        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+                          <QrCodeDisplay value={unit.qrCode} size={40} />
+                          <code className="hidden font-mono text-xs text-muted-foreground sm:inline">
                             {unit.qrCode}
                           </code>
                           {canWrite && (
