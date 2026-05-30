@@ -49,4 +49,32 @@ describe("getEquipmentUnitByQrCode", () => {
     const result = await getEquipmentUnitByQrCode("QR-MISSING");
     expect(result).toBeNull();
   });
+
+  it("retorna null quando equipment relacionado vier nulo (orphan)", async () => {
+    mocks.createSupabaseAdminClient.mockReturnValue(
+      fakeSupabase({
+        id: "u1",
+        equipment_id: "e1",
+        variant_id: null,
+        status: "available",
+        equipment: null,
+      })
+    );
+    const result = await getEquipmentUnitByQrCode("QR-ORPHAN");
+    expect(result).toBeNull();
+  });
+
+  it("preserva variantId quando unit pertence a variante", async () => {
+    mocks.createSupabaseAdminClient.mockReturnValue(
+      fakeSupabase({
+        id: "u1",
+        equipment_id: "e1",
+        variant_id: "var-XLR",
+        status: "available",
+        equipment: { organization_id: "org1" },
+      })
+    );
+    const result = await getEquipmentUnitByQrCode("QR-VAR");
+    expect(result?.variantId).toBe("var-XLR");
+  });
 });
