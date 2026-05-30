@@ -198,4 +198,38 @@ describe("getEquipmentAvailability (Refactor H — overlap por datas reais)", ()
     expect(supabase._calls().event_dates ?? 0).toBe(0);
     expect(supabase._calls().event_equipment ?? 0).toBe(0);
   });
+
+  it("não conta event_equipment com returned_at setado", async () => {
+    const supabase = fakeSupabase({
+      equipment: () => ({
+        data: [
+          {
+            id: "eq-1",
+            type: "serialized",
+            has_variants: false,
+            equipment_units: [
+              { id: "u1", variant_id: null, status: "available" },
+              { id: "u2", variant_id: null, status: "available" },
+            ],
+            bulk_inventory: [],
+            equipment_variants: [],
+          },
+        ],
+      }),
+      event_dates: () => ({
+        data: [{ event_id: "evt-A" }],
+      }),
+      event_equipment: () => ({
+        // OS A tinha 2 unidades alocadas, mas já foi totalmente devolvida.
+        // Query agora filtra returned_at IS NULL → zero rows → allocated=0.
+        data: [],
+      }),
+    });
+
+    mocks.createSupabaseAdminClient.mockReturnValue(supabase);
+    const result = await getEquipmentAvailability("org-1", ["2026-08-08"]);
+    const av = result.get(availabilityKey("eq-1", null));
+    expect(av?.allocated).toBe(0);
+    expect(av?.available).toBe(2);
+  });
 });

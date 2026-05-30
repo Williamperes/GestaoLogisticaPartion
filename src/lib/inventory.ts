@@ -469,8 +469,9 @@ export async function getEquipmentAvailability(
     if (overlappingEventIds.size > 0) {
       const { data: allocData, error: allocErr } = await supabase
         .from("event_equipment")
-        .select("equipment_id, variant_id, qty")
-        .in("event_id", Array.from(overlappingEventIds));
+        .select("equipment_id, variant_id, qty, returned_at")
+        .in("event_id", Array.from(overlappingEventIds))
+        .is("returned_at", null);
       if (allocErr) throw allocErr;
 
       for (const row of allocData ?? []) {
