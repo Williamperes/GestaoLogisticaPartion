@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { BrowserMultiFormatReader } from "@zxing/browser";
+import { BrowserMultiFormatReader, type IScannerControls } from "@zxing/browser";
 
 interface QrScannerProps {
   onResult: (text: string) => void;
@@ -18,6 +18,7 @@ export function QrScanner({ onResult, onError, pauseAfterScanMs = 1500 }: QrScan
 
     const reader = new BrowserMultiFormatReader();
     let stopped = false;
+    let controls: IScannerControls | null = null;
     let lastEmitAt = 0;
     const videoEl = videoRef.current;
 
@@ -33,10 +34,19 @@ export function QrScanner({ onResult, onError, pauseAfterScanMs = 1500 }: QrScan
           onError?.(err);
         }
       })
+      .then((c) => {
+        if (stopped) {
+          c.stop();
+          return;
+        }
+        controls = c;
+      })
       .catch((err: Error) => onError?.(err));
 
     return () => {
       stopped = true;
+      controls?.stop();
+      controls = null;
       const stream = videoEl.srcObject as MediaStream | null;
       stream?.getTracks().forEach((t) => t.stop());
       videoEl.srcObject = null;
