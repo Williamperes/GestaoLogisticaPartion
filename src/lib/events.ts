@@ -25,6 +25,16 @@ export interface EventChecklistItem {
   doneBy: string | null;
 }
 
+export interface EventEquipmentUnit {
+  id: string;
+  eventEquipmentId: string;
+  equipmentUnitId: string;
+  loadedAt: string | null;
+  loadedBy: string | null;
+  returnedAt: string | null;
+  returnedBy: string | null;
+}
+
 export interface EventEquipmentItem {
   id: string;
   eventId: string;
@@ -42,6 +52,9 @@ export interface EventEquipmentItem {
   loaded: boolean;
   loadedAt: string | null;
   loadedBy: string | null;
+  returnedAt: string | null;
+  loadedUnitsCount: number;
+  returnedUnitsCount: number;
   notes: string | null;
 }
 
@@ -263,10 +276,11 @@ export async function getEventById(id: string): Promise<EventDetail | null> {
         id, event_id, equipment_id, unit_id, variant_id, qty,
         separated, separated_at, separated_by,
         loaded, loaded_at, loaded_by,
-        notes,
+        returned_at, notes,
         equipment (id, name),
         equipment_units (id, serial, status),
-        equipment_variants (id, label)
+        equipment_variants (id, label),
+        event_equipment_units (id, loaded_at, returned_at)
       ),
       event_speakers (
         id, event_id, name, organization,
@@ -299,10 +313,12 @@ export async function getEventById(id: string): Promise<EventDetail | null> {
       qty: number;
       separated: boolean; separated_at: string | null; separated_by: string | null;
       loaded: boolean; loaded_at: string | null; loaded_by: string | null;
+      returned_at: string | null;
       notes: string | null;
       equipment: { id: string; name: string };
       equipment_units: { id: string; serial: string; status: string } | null;
       equipment_variants: { id: string; label: string } | null;
+      event_equipment_units: { id: string; loaded_at: string | null; returned_at: string | null }[] | null;
     }[]
   ) ?? [];
   const speakerRows = (
@@ -366,25 +382,31 @@ export async function getEventById(id: string): Promise<EventDetail | null> {
         doneAt: c.done_at,
         doneBy: c.done_by,
       })),
-    equipment: equipRows.map((e) => ({
-      id: e.id,
-      eventId: e.event_id,
-      equipmentId: e.equipment_id,
-      equipmentName: e.equipment.name,
-      variantId: e.variant_id,
-      variantLabel: e.equipment_variants?.label ?? null,
-      unitId: e.unit_id,
-      unitSerial: e.equipment_units?.serial ?? null,
-      unitStatus: e.equipment_units?.status ?? null,
-      qty: e.qty,
-      separated: e.separated,
-      separatedAt: e.separated_at,
-      separatedBy: e.separated_by,
-      loaded: e.loaded,
-      loadedAt: e.loaded_at,
-      loadedBy: e.loaded_by,
-      notes: e.notes,
-    })),
+    equipment: equipRows.map((e) => {
+      const eeUnits = e.event_equipment_units ?? [];
+      return {
+        id: e.id,
+        eventId: e.event_id,
+        equipmentId: e.equipment_id,
+        equipmentName: e.equipment.name,
+        variantId: e.variant_id,
+        variantLabel: e.equipment_variants?.label ?? null,
+        unitId: e.unit_id,
+        unitSerial: e.equipment_units?.serial ?? null,
+        unitStatus: e.equipment_units?.status ?? null,
+        qty: e.qty,
+        separated: e.separated,
+        separatedAt: e.separated_at,
+        separatedBy: e.separated_by,
+        loaded: e.loaded,
+        loadedAt: e.loaded_at,
+        loadedBy: e.loaded_by,
+        returnedAt: e.returned_at,
+        loadedUnitsCount: eeUnits.filter((u) => u.loaded_at !== null).length,
+        returnedUnitsCount: eeUnits.filter((u) => u.returned_at !== null).length,
+        notes: e.notes,
+      };
+    }),
     speakers: speakerRows
       .slice()
       .sort((a, b) => a.position - b.position)
