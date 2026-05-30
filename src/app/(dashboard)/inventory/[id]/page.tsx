@@ -13,6 +13,7 @@ import { formatDateBR } from "@/lib/dates";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { DeleteConfirmDialog } from "@/components/ui/delete-confirm-dialog";
 import { QrCodeDisplay } from "@/components/inventory/QrCodeDisplay";
+import { LinkQrButton } from "@/components/inventory/LinkQrButton";
 import { deleteEquipmentUnit } from "@/app/(dashboard)/inventory/actions";
 
 import { EditEquipmentSheet } from "@/app/(dashboard)/inventory/[id]/EditEquipmentSheet";
@@ -234,7 +235,15 @@ export default async function InventoryDetailPage({ params, searchParams }: Prop
                           <code className="font-mono text-xs text-muted-foreground">
                             {unit.qrCode}
                           </code>
+                          {canWrite && (
+                            <LinkQrButton
+                              unitId={unit.id}
+                              unitSerial={unit.serial}
+                            />
+                          )}
                         </div>
+                      ) : canWrite ? (
+                        <LinkQrButton unitId={unit.id} unitSerial={unit.serial} />
                       ) : (
                         <span className="text-xs italic text-muted-foreground">
                           Sem QR

@@ -177,6 +177,54 @@ export async function updateEquipmentUnitStatus(formData: FormData) {
 }
 
 // ──────────────────────────────────────────────────────────────────
+// setUnitQrCode
+// Vincula (ou re-vincula) o código de um adesivo QR a uma unidade
+// existente. Retorna {ok, error?} pra uso por client modal.
+// ──────────────────────────────────────────────────────────────────
+export interface SetUnitQrCodeResult {
+  ok: boolean;
+  error?: string;
+}
+
+export async function setUnitQrCode(
+  unitId: string,
+  qrCode: string
+): Promise<SetUnitQrCodeResult> {
+  const context = await getCurrentUserContext();
+  if (
+    !context?.role ||
+    !WRITE_ROLES.includes(context.role as (typeof WRITE_ROLES)[number])
+  ) {
+    return { ok: false, error: "Sem permissão" };
+  }
+
+  const trimmedId = unitId.trim();
+  const trimmedQr = qrCode.trim();
+  if (!trimmedId) return { ok: false, error: "Unidade inválida" };
+  if (!trimmedQr) return { ok: false, error: "QR vazio" };
+
+  const supabase = createSupabaseAdminClient();
+  const { data: unit, error: updateError } = await supabase
+    .from("equipment_units")
+    .update({ qr_code: trimmedQr })
+    .eq("id", trimmedId)
+    .select("id, equipment_id")
+    .maybeSingle();
+
+  if (updateError) {
+    if (updateError.code === "23505") {
+      return { ok: false, error: "Este QR já está vinculado a outra unidade" };
+    }
+    return { ok: false, error: updateError.message };
+  }
+  if (!unit) return { ok: false, error: "Unidade não encontrada" };
+
+  revalidatePath(`/inventory/${unit.equipment_id}`);
+  revalidatePath("/inventory");
+  return { ok: true };
+}
+
+// ──────────────────────────────────────────────────────────────────
 // deactivateEquipment
 // Soft-delete: status = 'inactive' (não apaga dados históricos)
 // ──────────────────────────────────────────────────────────────────
