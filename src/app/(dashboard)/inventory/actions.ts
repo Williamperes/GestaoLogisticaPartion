@@ -89,7 +89,8 @@ export async function createEquipment(formData: FormData) {
     // Equipamentos com variantes: as unidades serão cadastradas DEPOIS por variante.
     // Sem variantes: cria uma unidade inicial com os dados do serializado.
     if (!hasVariants) {
-      const unitQrCode = generateQrToken("UN", equipment.id);
+      const providedQr = String(formData.get("qrCode") ?? "").trim();
+      const unitQrCode = providedQr || generateQrToken("UN", equipment.id);
       const { error: unitError } = await supabase
         .from("equipment_units")
         .insert({
