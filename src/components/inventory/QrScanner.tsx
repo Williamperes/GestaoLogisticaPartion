@@ -31,7 +31,8 @@ export function QrScanner({ onResult, onError, pauseAfterScanMs = 1500 }: QrScan
       "FormatException",
       "ReaderException",
     ]);
-    const TRANSIENT_MSG_RE = /no\s+multi\s*format\s+readers|not\s*found|no\s+code\s+found/i;
+    const TRANSIENT_MSG_RE =
+      /no\s+multi\s*format\s+readers|not\s*found|no\s+code\s+found|source\s+width\s+is\s+0|getImageData/i;
 
     reader
       .decodeFromVideoDevice(undefined, videoEl, (result, err) => {
