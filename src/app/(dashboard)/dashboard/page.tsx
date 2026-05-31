@@ -8,6 +8,7 @@ import {
   Wrench,
 } from "lucide-react";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 
 import { getCurrentUserContext } from "@/lib/auth/session";
 import { getDashboardKPIs, getCategoryStats } from "@/lib/dashboard";
@@ -20,6 +21,7 @@ import { DashboardCharts } from "@/app/(dashboard)/dashboard/DashboardCharts";
 
 export default async function DashboardPage() {
   const context = await getCurrentUserContext();
+  if (context?.role === "warehouse") redirect("/scan");
   const organizationId = context?.primaryOrganization?.id;
 
   const [kpis, categoryStats, upcomingEvents] = organizationId

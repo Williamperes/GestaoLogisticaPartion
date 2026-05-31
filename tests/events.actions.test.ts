@@ -107,7 +107,7 @@ describe("events actions", () => {
           city: "São Paulo",
         })
       )
-    ).rejects.toThrow("NEXT_REDIRECT:/events/event-1?success=Evento criado.");
+    ).rejects.toThrow("NEXT_REDIRECT:/events/event-1?success=Evento%20criado.");
 
     expect(eventInsert).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -185,7 +185,7 @@ describe("events actions", () => {
           templateId: "tmpl-1",
         })
       )
-    ).rejects.toThrow("NEXT_REDIRECT:/events/event-2?success=Evento criado.");
+    ).rejects.toThrow("NEXT_REDIRECT:/events/event-2?success=Evento%20criado.");
 
     expect(mocks.getChecklistTemplate).toHaveBeenCalledWith("tmpl-1");
     const insertedItems = checklistInsert.mock.calls[0][0] as Array<Record<string, unknown>>;
@@ -436,7 +436,7 @@ describe("events actions", () => {
           strictVenueHours: "on",
         })
       )
-    ).rejects.toThrow("NEXT_REDIRECT:/events/event-3?success=Evento criado.");
+    ).rejects.toThrow("NEXT_REDIRECT:/events/event-3?success=Evento%20criado.");
 
     expect(eventInsert).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -539,7 +539,7 @@ describe("events actions", () => {
           clientDemanding: "on",
         })
       )
-    ).rejects.toThrow("NEXT_REDIRECT:/events/event-9?success=Detalhes atualizados.");
+    ).rejects.toThrow("NEXT_REDIRECT:/events/event-9?success=Detalhes%20atualizados.");
 
     expect(updateFn).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -639,7 +639,7 @@ describe("events actions", () => {
           notes: "Cênica externa só no sábado.",
         })
       )
-    ).rejects.toThrow("NEXT_REDIRECT:/events/event-50?success=Data adicionada.");
+    ).rejects.toThrow("NEXT_REDIRECT:/events/event-50?success=Data%20adicionada.");
 
     expect(datesInsert).toHaveBeenCalledWith({
       event_id: "event-50",
@@ -770,7 +770,7 @@ describe("events actions", () => {
           customRole: "Banda",
         })
       )
-    ).rejects.toThrow(/success=Pessoa adicionada/);
+    ).rejects.toThrow(/success=Pessoa%20adicionada/);
 
     expect(teamInsert).toHaveBeenCalledWith({
       event_date_id: "date-1",

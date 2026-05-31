@@ -131,8 +131,29 @@ export const DEFAULT_CHECKLIST_ITEMS: {
 // Fetch helpers
 // ──────────────────────────────────────────────────────────────────
 
-export async function listEvents(organizationId: string, search?: string): Promise<Event[]> {
+export async function listEvents(
+  organizationId: string,
+  search?: string,
+  opts?: { restrictTeamMemberId?: string | null }
+): Promise<Event[]> {
   const supabase = createSupabaseAdminClient();
+
+  // Restringe à OS onde o team_member está na escala.
+  // Resolve event_ids via event_dates → event_date_team_members.
+  let allowedEventIds: string[] | null = null;
+  if (opts?.restrictTeamMemberId) {
+    const { data: edtm, error: edtmErr } = await supabase
+      .from("event_date_team_members")
+      .select("event_dates!inner(event_id)")
+      .eq("team_member_id", opts.restrictTeamMemberId);
+    if (edtmErr) throw edtmErr;
+    const eventIds = new Set<string>();
+    for (const row of (edtm as unknown as { event_dates: { event_id: string } }[]) ?? []) {
+      if (row.event_dates?.event_id) eventIds.add(row.event_dates.event_id);
+    }
+    allowedEventIds = [...eventIds];
+    if (allowedEventIds.length === 0) return [];
+  }
 
   let query = supabase
     .from("events")
@@ -150,6 +171,10 @@ export async function listEvents(organizationId: string, search?: string): Promi
     `)
     .eq("organization_id", organizationId)
     .order("start_date", { ascending: false });
+
+  if (allowedEventIds) {
+    query = query.in("id", allowedEventIds);
+  }
 
   const q = search?.trim();
   if (q) {
@@ -437,6 +462,126 @@ export async function getEventById(id: string): Promise<EventDetail | null> {
         position: x.position,
       })),
   };
+}
+
+// ──────────────────────────────────────────────────────────────────
+// Hub do técnico: events onde tech está escalado, com agregados de
+// carga/retorno pra decidir próxima ação.
+// ──────────────────────────────────────────────────────────────────
+
+export type ScanEventState =
+  | "to_load"        // 0 carregado
+  | "loading"        // parcialmente carregado
+  | "to_return"      // tudo carregado, 0 retornado
+  | "returning"      // retorno parcial
+  | "done";          // tudo retornado
+
+export interface MyScanEvent {
+  id: string;
+  name: string;
+  venue: string | null;
+  city: string | null;
+  startDate: string;
+  endDate: string;
+  totalQty: number;
+  loadedCount: number;
+  returnedCount: number;
+  state: ScanEventState;
+  clientName: string | null;
+}
+
+export async function listMyScanEvents(
+  teamMemberId: string
+): Promise<MyScanEvent[]> {
+  const supabase = createSupabaseAdminClient();
+
+  // 1) event_ids onde tech está escalado.
+  const { data: scheduleRows, error: scheduleErr } = await supabase
+    .from("event_date_team_members")
+    .select("event_dates!inner(event_id)")
+    .eq("team_member_id", teamMemberId);
+  if (scheduleErr) throw scheduleErr;
+
+  const eventIds = Array.from(
+    new Set(
+      (scheduleRows as unknown as { event_dates: { event_id: string } }[] | null)
+        ?.map((r) => r.event_dates?.event_id)
+        .filter((id): id is string => Boolean(id)) ?? []
+    )
+  );
+  if (eventIds.length === 0) return [];
+
+  // 2) Eventos + equipment + units pra agregar.
+  const { data: events, error: evErr } = await supabase
+    .from("events")
+    .select(`
+      id, name, venue, city, start_date, end_date,
+      organizations!events_client_organization_id_fkey (name),
+      event_equipment (
+        qty,
+        event_equipment_units (loaded_at, returned_at)
+      )
+    `)
+    .in("id", eventIds)
+    .neq("status", "cancelled")
+    .order("start_date", { ascending: true });
+  if (evErr) throw evErr;
+
+  type EventRow = {
+    id: string;
+    name: string;
+    venue: string | null;
+    city: string | null;
+    start_date: string;
+    end_date: string;
+    organizations: { name: string } | null;
+    event_equipment: {
+      qty: number;
+      event_equipment_units: { loaded_at: string | null; returned_at: string | null }[] | null;
+    }[] | null;
+  };
+
+  return (events as unknown as EventRow[] | null ?? []).map((ev) => {
+    const equipment = ev.event_equipment ?? [];
+    let totalQty = 0;
+    let loadedCount = 0;
+    let returnedCount = 0;
+    for (const e of equipment) {
+      totalQty += e.qty;
+      const units = e.event_equipment_units ?? [];
+      loadedCount += units.filter((u) => u.loaded_at !== null).length;
+      returnedCount += units.filter((u) => u.returned_at !== null).length;
+    }
+
+    let state: ScanEventState;
+    if (totalQty === 0) {
+      state = "to_load";
+    } else if (loadedCount === 0) {
+      state = "to_load";
+    } else if (loadedCount < totalQty) {
+      state = "loading";
+    } else if (returnedCount === 0) {
+      state = "to_return";
+    } else if (returnedCount < totalQty) {
+      state = "returning";
+    } else {
+      state = "done";
+    }
+
+    return {
+      id: ev.id,
+      name: ev.name,
+      venue: ev.venue,
+      city: ev.city,
+      startDate: ev.start_date,
+      endDate: ev.end_date,
+      totalQty,
+      loadedCount,
+      returnedCount,
+      state,
+      clientName: ev.organizations?.name ?? null,
+    };
+  });
 }
 
 // ──────────────────────────────────────────────────────────────────

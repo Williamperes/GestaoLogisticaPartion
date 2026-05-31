@@ -110,6 +110,7 @@ export async function listTeamMembers(organizationId: string) {
       available,
       notes,
       created_at,
+      user_id,
       team_specialties!inner (
         id,
         name,
@@ -137,6 +138,39 @@ export async function listTeamMembers(organizationId: string) {
       available: member.available,
       notes: member.notes,
       createdAt: member.created_at,
+      userId: member.user_id ?? null,
     })) ?? []
   ) satisfies TeamMember[];
+}
+
+export async function getTeamMemberByUserId(
+  userId: string,
+  organizationId: string
+): Promise<{ id: string } | null> {
+  const supabase = createSupabaseAdminClient();
+  const { data, error } = await supabase
+    .from("team_members")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("organization_id", organizationId)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data ?? null;
+}
+
+// Verifica se o team_member está escalado em alguma data deste evento.
+export async function teamMemberHasEventAccess(
+  teamMemberId: string,
+  eventId: string
+): Promise<boolean> {
+  const supabase = createSupabaseAdminClient();
+  const { data, error } = await supabase
+    .from("event_date_team_members")
+    .select("event_dates!inner(event_id)")
+    .eq("team_member_id", teamMemberId)
+    .eq("event_dates.event_id", eventId)
+    .limit(1);
+  if (error) throw error;
+  return (data?.length ?? 0) > 0;
 }

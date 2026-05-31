@@ -141,5 +141,7 @@ export async function getDefaultAppPathForUser(userId: string) {
     throw error;
   }
 
-  return data?.role === "client" ? "/client" : "/dashboard";
+  if (data?.role === "client") return "/client";
+  if (data?.role === "warehouse") return "/scan";
+  return "/dashboard";
 }

@@ -160,7 +160,7 @@ export async function createEvent(formData: FormData) {
   }
 
   revalidatePath("/events");
-  redirect(`/events/${event.id}?success=Evento criado.`);
+  redirect(`/events/${event.id}?success=Evento%20criado.`);
 }
 
 // ──────────────────────────────────────────────────────────────────
@@ -317,7 +317,7 @@ export async function promoteToReadyToLoad(formData: FormData) {
 
   revalidatePath(`/events/${eventId}`);
   revalidatePath("/events");
-  redirect(`/events/${eventId}?success=Evento liberado para carga!`);
+  redirect(`/events/${eventId}?success=Evento%20liberado%20para%20carga!`);
 }
 
 // ──────────────────────────────────────────────────────────────────
@@ -390,7 +390,7 @@ export async function setEventEquipmentBatch(formData: FormData) {
 
   if (desired.size === 0) {
     revalidatePath(`/events/${eventId}`);
-    redirect(`/events/${eventId}?success=Nenhuma alteração.`);
+    redirect(`/events/${eventId}?success=Nenhuma%20altera%C3%A7%C3%A3o.`);
   }
 
   const supabase = createSupabaseAdminClient();
@@ -707,7 +707,7 @@ export async function updateEventDetails(formData: FormData) {
 
   revalidatePath(`/events/${eventId}`);
   revalidatePath("/events");
-  redirect(`/events/${eventId}?success=Detalhes atualizados.`);
+  redirect(`/events/${eventId}?success=Detalhes%20atualizados.`);
 }
 
 // ──────────────────────────────────────────────────────────────────
@@ -849,7 +849,7 @@ export async function addEventDate(formData: FormData) {
 
   revalidatePath(`/events/${eventId}`);
   revalidatePath("/events");
-  redirect(`/events/${eventId}?success=Data adicionada.`);
+  redirect(`/events/${eventId}?success=Data%20adicionada.`);
 }
 
 // ──────────────────────────────────────────────────────────────────
@@ -893,7 +893,7 @@ export async function updateEventDate(formData: FormData) {
   }
 
   revalidatePath(`/events/${eventId}`);
-  redirect(`/events/${eventId}?success=Data atualizada.`);
+  redirect(`/events/${eventId}?success=Data%20atualizada.`);
 }
 
 // ──────────────────────────────────────────────────────────────────
@@ -920,7 +920,7 @@ export async function removeEventDate(formData: FormData) {
   }
 
   revalidatePath(`/events/${eventId}`);
-  redirect(`/events/${eventId}?success=Data removida.`);
+  redirect(`/events/${eventId}?success=Data%20removida.`);
 }
 
 // ──────────────────────────────────────────────────────────────────
@@ -991,7 +991,7 @@ export async function addEventDateTeamMember(formData: FormData) {
   }
 
   revalidatePath(`/events/${eventId}`);
-  redirect(`/events/${eventId}?success=Pessoa adicionada à escala.`);
+  redirect(`/events/${eventId}?success=Pessoa%20adicionada%20%C3%A0%20escala.`);
 }
 
 // ──────────────────────────────────────────────────────────────────
@@ -1060,7 +1060,7 @@ export async function updateEventDateTeamMember(formData: FormData) {
   }
 
   revalidatePath(`/events/${eventId}`);
-  redirect(`/events/${eventId}?success=Escala atualizada.`);
+  redirect(`/events/${eventId}?success=Escala%20atualizada.`);
 }
 
 // ──────────────────────────────────────────────────────────────────
@@ -1087,7 +1087,7 @@ export async function removeEventDateTeamMember(formData: FormData) {
   }
 
   revalidatePath(`/events/${eventId}`);
-  redirect(`/events/${eventId}?success=Pessoa removida da escala.`);
+  redirect(`/events/${eventId}?success=Pessoa%20removida%20da%20escala.`);
 }
 
 // ──────────────────────────────────────────────────────────────────
@@ -1148,7 +1148,7 @@ export async function addEventSpeaker(formData: FormData) {
   }
 
   revalidatePath(`/events/${eventId}`);
-  redirect(`/events/${eventId}?success=Palestrante adicionado.`);
+  redirect(`/events/${eventId}?success=Palestrante%20adicionado.`);
 }
 
 export async function updateEventSpeaker(formData: FormData) {
@@ -1185,7 +1185,7 @@ export async function updateEventSpeaker(formData: FormData) {
   }
 
   revalidatePath(`/events/${eventId}`);
-  redirect(`/events/${eventId}?success=Palestrante atualizado.`);
+  redirect(`/events/${eventId}?success=Palestrante%20atualizado.`);
 }
 
 export async function removeEventSpeaker(formData: FormData) {
@@ -1209,7 +1209,7 @@ export async function removeEventSpeaker(formData: FormData) {
   }
 
   revalidatePath(`/events/${eventId}`);
-  redirect(`/events/${eventId}?success=Palestrante removido.`);
+  redirect(`/events/${eventId}?success=Palestrante%20removido.`);
 }
 
 // ──────────────────────────────────────────────────────────────────
@@ -1293,7 +1293,7 @@ export async function addEventExtra(formData: FormData) {
   }
 
   revalidatePath(`/events/${eventId}`);
-  redirect(`/events/${eventId}?success=Extra adicionado.`);
+  redirect(`/events/${eventId}?success=Extra%20adicionado.`);
 }
 
 export async function updateEventExtra(formData: FormData) {
@@ -1332,7 +1332,7 @@ export async function updateEventExtra(formData: FormData) {
   }
 
   revalidatePath(`/events/${eventId}`);
-  redirect(`/events/${eventId}?success=Extra atualizado.`);
+  redirect(`/events/${eventId}?success=Extra%20atualizado.`);
 }
 
 export async function removeEventExtra(formData: FormData) {
@@ -1356,5 +1356,5 @@ export async function removeEventExtra(formData: FormData) {
   }
 
   revalidatePath(`/events/${eventId}`);
-  redirect(`/events/${eventId}?success=Extra removido.`);
+  redirect(`/events/${eventId}?success=Extra%20removido.`);
 }

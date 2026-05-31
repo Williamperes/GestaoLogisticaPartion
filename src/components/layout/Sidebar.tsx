@@ -18,34 +18,73 @@ import {
   Bell,
   Settings,
   Menu,
+  ScanLine,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { signOut } from "@/app/(auth)/actions";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
+import type { AppRole } from "@/lib/auth/roles";
 
-const navGroups = [
+type NavRole = AppRole;
+
+interface NavItem {
+  href: string;
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  badge?: number;
+  roles: readonly NavRole[];
+}
+
+interface NavGroup {
+  label: string;
+  items: readonly NavItem[];
+}
+
+const ALL: readonly NavRole[] = ["super_admin", "admin", "operations", "warehouse", "finance"];
+const NON_WAREHOUSE: readonly NavRole[] = ["super_admin", "admin", "operations", "finance"];
+const ADMIN_OPS: readonly NavRole[] = ["super_admin", "admin", "operations"];
+const ADMIN_ONLY: readonly NavRole[] = ["super_admin", "admin"];
+const WAREHOUSE_ONLY: readonly NavRole[] = ["warehouse"];
+
+const navGroups: readonly NavGroup[] = [
   {
     label: "Operações",
     items: [
-      { href: "/dashboard", icon: LayoutDashboard, label: "Dashboard" },
-      { href: "/events", icon: CalendarDays, label: "Eventos & OS", badge: 3 },
-      { href: "/inventory", icon: Package, label: "Inventário" },
+      { href: "/scan", icon: ScanLine, label: "Bipar OS", roles: WAREHOUSE_ONLY },
+      { href: "/dashboard", icon: LayoutDashboard, label: "Dashboard", roles: NON_WAREHOUSE },
+      { href: "/events", icon: CalendarDays, label: "Eventos & OS", badge: 3, roles: NON_WAREHOUSE },
+      { href: "/inventory", icon: Package, label: "Inventário", roles: ADMIN_OPS },
     ],
   },
   {
     label: "Cadastros",
     items: [
-      { href: "/clients", icon: Users, label: "Clientes" },
-      { href: "/team", icon: UserRound, label: "Equipe" },
+      { href: "/clients", icon: Users, label: "Clientes", roles: ADMIN_OPS },
+      { href: "/team", icon: UserRound, label: "Equipe", roles: ADMIN_OPS },
     ],
   },
 ];
 
+function filterGroups(role: AppRole | null): NavGroup[] {
+  if (!role) return [];
+  return navGroups
+    .map((group) => ({
+      ...group,
+      items: group.items.filter((item) => item.roles.includes(role)),
+    }))
+    .filter((group) => group.items.length > 0);
+}
+
+function canSeeSettings(role: AppRole | null) {
+  return role !== null && ADMIN_ONLY.includes(role);
+}
+
 function SidebarContent({
   userName,
   userRole,
+  role,
   collapsed,
   onToggleCollapsed,
   onItemSelect,
@@ -53,12 +92,15 @@ function SidebarContent({
 }: {
   userName: string;
   userRole: string;
+  role: AppRole | null;
   collapsed: boolean;
   onToggleCollapsed?: () => void;
   onItemSelect?: () => void;
   mobile?: boolean;
 }) {
   const pathname = usePathname();
+  const visibleGroups = filterGroups(role);
+  const showSettings = canSeeSettings(role);
 
   const containerClasses = mobile
     ? "relative flex h-full flex-col overflow-hidden bg-sidebar"
@@ -112,7 +154,7 @@ function SidebarContent({
       </div>
 
       <nav className="flex-1 overflow-y-auto py-4 px-2 space-y-6">
-        {navGroups.map((group) => (
+        {visibleGroups.map((group) => (
           <div key={group.label}>
             {!collapsed && (
               <p className="px-2 mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/60">
@@ -191,38 +233,40 @@ function SidebarContent({
           </TooltipTrigger>
           {!mobile && collapsed && <TooltipContent side="right">Notificações</TooltipContent>}
         </Tooltip>
-        <Tooltip>
-          <TooltipTrigger
-            render={(props) => (
-              <Link
-                href="/settings"
-                onClick={onItemSelect}
-                {...(props as React.ComponentPropsWithoutRef<"a">)}
-              />
-            )}
-            className={cn(
-              "flex items-center gap-3 px-2 py-2 rounded-lg text-sm transition-all",
-              pathname === "/settings" || pathname.startsWith("/settings/")
-                ? "bg-amber-500/10 text-amber-600"
-                : "text-sidebar-foreground/60 hover:bg-black/5 hover:text-sidebar-foreground"
-            )}
-          >
-            <Settings
+        {showSettings && (
+          <Tooltip>
+            <TooltipTrigger
+              render={(props) => (
+                <Link
+                  href="/settings"
+                  onClick={onItemSelect}
+                  {...(props as React.ComponentPropsWithoutRef<"a">)}
+                />
+              )}
               className={cn(
-                "w-4.5 h-4.5 shrink-0",
-                (pathname === "/settings" || pathname.startsWith("/settings/")) && "text-amber-600"
+                "flex items-center gap-3 px-2 py-2 rounded-lg text-sm transition-all",
+                pathname === "/settings" || pathname.startsWith("/settings/")
+                  ? "bg-amber-500/10 text-amber-600"
+                  : "text-sidebar-foreground/60 hover:bg-black/5 hover:text-sidebar-foreground"
               )}
-            />
-            <AnimatePresence>
-              {!collapsed && (
-                <motion.span initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-                  Configurações
-                </motion.span>
-              )}
-            </AnimatePresence>
-          </TooltipTrigger>
-          {!mobile && collapsed && <TooltipContent side="right">Configurações</TooltipContent>}
-        </Tooltip>
+            >
+              <Settings
+                className={cn(
+                  "w-4.5 h-4.5 shrink-0",
+                  (pathname === "/settings" || pathname.startsWith("/settings/")) && "text-amber-600"
+                )}
+              />
+              <AnimatePresence>
+                {!collapsed && (
+                  <motion.span initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                    Configurações
+                  </motion.span>
+                )}
+              </AnimatePresence>
+            </TooltipTrigger>
+            {!mobile && collapsed && <TooltipContent side="right">Configurações</TooltipContent>}
+          </Tooltip>
+        )}
 
         <form action={signOut} className="mt-2">
           <button
@@ -276,9 +320,11 @@ function SidebarContent({
 export function Sidebar({
   userName,
   userRole,
+  role,
 }: {
   userName: string;
   userRole: string;
+  role: AppRole | null;
 }) {
   const [collapsed, setCollapsed] = useState(false);
 
@@ -287,6 +333,7 @@ export function Sidebar({
         <SidebarContent
           userName={userName}
           userRole={userRole}
+          role={role}
           collapsed={collapsed}
           onToggleCollapsed={() => setCollapsed((current) => !current)}
       />
@@ -297,9 +344,11 @@ export function Sidebar({
 export function MobileSidebar({
   userName,
   userRole,
+  role,
 }: {
   userName: string;
   userRole: string;
+  role: AppRole | null;
 }) {
   const [open, setOpen] = useState(false);
 
@@ -317,6 +366,7 @@ export function MobileSidebar({
         <SidebarContent
           userName={userName}
           userRole={userRole}
+          role={role}
           collapsed={false}
           mobile
           onItemSelect={() => setOpen(false)}

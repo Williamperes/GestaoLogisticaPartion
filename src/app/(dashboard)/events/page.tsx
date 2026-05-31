@@ -13,6 +13,7 @@ import {
 import { listClientOrganizations } from "@/lib/clients";
 import { listChecklistTemplates } from "@/lib/checklist-templates";
 import { formatDateBR } from "@/lib/dates";
+import { getTeamMemberByUserId } from "@/lib/team";
 import type { EventStatus } from "@/lib/events";
 
 const STATUS_FILTERS: { label: string; value: EventStatus | "all" }[] = [
@@ -35,9 +36,21 @@ export default async function EventsPage({ searchParams }: EventsPageProps) {
   const context = await getCurrentUserContext();
   const organizationId = context?.primaryOrganization?.id;
 
+  // Warehouse só vê OS onde está na escala. Se não tem team_member ligado,
+  // não vê nada.
+  let restrictTeamMemberId: string | null = null;
+  if (organizationId && context?.userId && context.role === "warehouse") {
+    const member = await getTeamMemberByUserId(context.userId, organizationId);
+    restrictTeamMemberId = member?.id ?? "__no-match__";
+  }
+
   const [events, clients, templates] = organizationId
     ? await Promise.all([
-        listEvents(organizationId, search),
+        restrictTeamMemberId === "__no-match__"
+          ? Promise.resolve([])
+          : listEvents(organizationId, search, {
+              restrictTeamMemberId: restrictTeamMemberId ?? undefined,
+            }),
         listClientOrganizations(),
         listChecklistTemplates(organizationId),
       ])

@@ -1,4 +1,4 @@
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 import {
   MapPin,
@@ -26,7 +26,7 @@ import { getEventById, getGateProgress, isChecklistComplete } from "@/lib/events
 import { listEquipment, getEquipmentAvailability } from "@/lib/inventory";
 import { listClientOrganizations } from "@/lib/clients";
 import { listEventDates } from "@/lib/event-dates.server";
-import { listTeamMembers } from "@/lib/team";
+import { getTeamMemberByUserId, listTeamMembers, teamMemberHasEventAccess } from "@/lib/team";
 import { getCurrentUserContext } from "@/lib/auth/session";
 import { formatDateBR } from "@/lib/dates";
 import {
@@ -41,15 +41,14 @@ import { EditEventDetailsSheet } from "@/app/(dashboard)/events/[id]/EditEventDe
 import { EventDatesPanel } from "@/app/(dashboard)/events/[id]/EventDatesPanel";
 import { SpeakersPanel } from "@/app/(dashboard)/events/[id]/SpeakersPanel";
 import { ExtrasPanel } from "@/app/(dashboard)/events/[id]/ExtrasPanel";
+import { EventToastSync } from "@/app/(dashboard)/events/[id]/EventToastSync";
 
 interface EventDetailPageProps {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ success?: string; error?: string }>;
 }
 
-export default async function EventDetailPage({ params, searchParams }: EventDetailPageProps) {
+export default async function EventDetailPage({ params }: EventDetailPageProps) {
   const { id } = await params;
-  const { success, error: errorMsg } = await searchParams;
 
   const [event, context, clients, eventDates] = await Promise.all([
     getEventById(id),
@@ -59,6 +58,16 @@ export default async function EventDetailPage({ params, searchParams }: EventDet
   ]);
 
   if (!event) notFound();
+
+  // Warehouse só vê OS onde está na escala.
+  if (context?.role === "warehouse" && context.userId && context.primaryOrganization?.id) {
+    const member = await getTeamMemberByUserId(
+      context.userId,
+      context.primaryOrganization.id
+    );
+    const allowed = member ? await teamMemberHasEventAccess(member.id, id) : false;
+    if (!allowed) redirect("/events?error=Sem acesso a esta OS.");
+  }
 
   const teamMembers = context?.primaryOrganization?.id
     ? (await listTeamMembers(context.primaryOrganization.id)).map((tm) => ({
@@ -98,17 +107,7 @@ export default async function EventDetailPage({ params, searchParams }: EventDet
         <span className="font-medium text-foreground">{event.name}</span>
       </nav>
 
-      {/* Toasts */}
-      {success && (
-        <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/8 px-4 py-3 text-sm text-emerald-600">
-          {decodeURIComponent(success)}
-        </div>
-      )}
-      {errorMsg && (
-        <div className="rounded-xl border border-red-500/30 bg-red-500/8 px-4 py-3 text-sm text-red-600">
-          {decodeURIComponent(errorMsg)}
-        </div>
-      )}
+      <EventToastSync />
 
       {/* Header */}
       <div className="flex flex-col gap-4 md:flex-row md:items-start">

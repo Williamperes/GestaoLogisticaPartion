@@ -1,8 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { Mail, Pencil, Trash2, UserRound } from "lucide-react";
-import { deleteTeamMember, updateTeamMember } from "@/app/(dashboard)/team/actions";
+import { KeyRound, Mail, Pencil, Trash2, UserRound } from "lucide-react";
+import {
+  deleteTeamMember,
+  resetTeamMemberPassword,
+  updateTeamMember,
+} from "@/app/(dashboard)/team/actions";
 import type { TeamMember } from "@/lib/team-shared";
 import { formatPhoneNumber } from "@/lib/utils";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
@@ -11,7 +15,28 @@ import { DeleteConfirmDialog } from "@/components/ui/delete-confirm-dialog";
 import { PhoneInput } from "@/components/ui/PhoneInput";
 import { useFormStatus } from "react-dom";
 
-export function TeamMemberCard({ member }: { member: TeamMember }) {
+function generatePassword(length = 14) {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
+  const cryptoObj =
+    typeof window !== "undefined" && window.crypto ? window.crypto : null;
+  let out = "";
+  if (cryptoObj) {
+    const buf = new Uint32Array(length);
+    cryptoObj.getRandomValues(buf);
+    for (let i = 0; i < length; i++) out += chars[buf[i] % chars.length];
+  } else {
+    for (let i = 0; i < length; i++) out += chars[Math.floor(Math.random() * chars.length)];
+  }
+  return out;
+}
+
+export function TeamMemberCard({
+  member,
+  canResetPassword,
+}: {
+  member: TeamMember;
+  canResetPassword: boolean;
+}) {
   const [hovered, setHovered] = useState(false);
   const [open, setOpen] = useState(false);
   const initials = member.name.split(" ").map((part) => part[0] ?? "").join("").slice(0, 2).toUpperCase();
@@ -111,6 +136,10 @@ export function TeamMemberCard({ member }: { member: TeamMember }) {
             </SheetContent>
           </Sheet>
 
+          {canResetPassword && member.userId && (
+            <ResetPasswordButton memberId={member.id} memberName={member.name} />
+          )}
+
           <DeleteTeamMemberButton memberId={member.id} memberName={member.name} />
         </div>
       </div>
@@ -164,6 +193,73 @@ function TeamMemberCardActions({ memberId, memberName }: { memberId: string; mem
         Apagar técnico
       </DeleteConfirmDialog>
     </div>
+  );
+}
+
+function ResetPasswordButton({
+  memberId,
+  memberName,
+}: {
+  memberId: string;
+  memberName: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [password, setPassword] = useState("");
+
+  return (
+    <Sheet open={open} onOpenChange={setOpen}>
+      <SheetTrigger
+        render={
+          <button
+            type="button"
+            title="Redefinir senha"
+            className="inline-flex size-7 items-center justify-center rounded-xl border border-amber-500/30 bg-background text-amber-600 transition hover:border-amber-500/40 hover:bg-amber-500/8"
+          />
+        }
+      >
+        <KeyRound className="h-4 w-4" />
+      </SheetTrigger>
+
+      <SheetContent side="right" className="w-full max-w-md border-l border-border bg-background p-0">
+        <SheetHeader className="border-b border-border px-6 py-5">
+          <SheetTitle>Redefinir senha</SheetTitle>
+          <SheetDescription>
+            Gera nova senha para <strong>{memberName}</strong>. Anote — será exibida apenas uma vez.
+          </SheetDescription>
+        </SheetHeader>
+
+        <form action={resetTeamMemberPassword} className="space-y-4 px-6 py-6">
+          <input type="hidden" name="id" value={memberId} />
+
+          <label className="space-y-2 block">
+            <span className="text-sm font-medium text-foreground">Nova senha</span>
+            <div className="flex gap-2">
+              <input
+                name="password"
+                type="text"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                minLength={8}
+                required
+                placeholder="Mínimo 8 caracteres"
+                className="flex-1 rounded-2xl border border-border bg-background px-4 py-3 text-sm outline-none transition focus:border-primary/50 focus:ring-4 focus:ring-primary/10"
+              />
+              <button
+                type="button"
+                onClick={() => setPassword(generatePassword())}
+                className="rounded-2xl border border-border bg-background px-3 text-xs font-semibold hover:bg-muted"
+              >
+                Gerar
+              </button>
+            </div>
+          </label>
+
+          <Button type="submit" className="h-11 w-full rounded-2xl text-sm font-semibold">
+            Redefinir senha
+          </Button>
+        </form>
+      </SheetContent>
+    </Sheet>
   );
 }
 

@@ -3,6 +3,7 @@
 import { Search, Bell, ChevronRight } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { MobileSidebar } from "@/components/layout/Sidebar";
+import type { AppRole } from "@/lib/auth/roles";
 
 const routeLabels: Record<string, string> = {
   "/dashboard": "Dashboard",
@@ -17,9 +18,11 @@ const routeLabels: Record<string, string> = {
 export function TopBar({
   userName,
   userRole,
+  role,
 }: {
   userName: string;
   userRole: string;
+  role: AppRole | null;
 }) {
   const pathname = usePathname();
 
@@ -36,7 +39,7 @@ export function TopBar({
 
   return (
     <header className="flex h-14 shrink-0 items-center gap-2 border-b border-border bg-background/60 px-3 backdrop-blur-sm sm:gap-4 sm:px-6">
-      <MobileSidebar userName={userName} userRole={userRole} />
+      <MobileSidebar userName={userName} userRole={userRole} role={role} />
 
       <nav className="flex min-w-0 flex-1 items-center gap-1.5 text-sm">
         {crumbs.map((crumb, i) => (

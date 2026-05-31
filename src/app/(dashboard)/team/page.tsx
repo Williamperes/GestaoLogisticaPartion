@@ -33,13 +33,17 @@ export default async function TeamPage() {
           <h1 className="text-2xl font-bold">Equipe</h1>
           <p className="text-sm text-muted-foreground mt-0.5">{members.length} técnicos cadastrados</p>
         </div>
-        <TeamToolbar />
+        <TeamToolbar canProvision={context.role === "super_admin" || context.role === "admin"} />
       </div>
 
       {members.length > 0 ? (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {members.map((member) => (
-            <TeamMemberCard key={member.id} member={member} />
+            <TeamMemberCard
+              key={member.id}
+              member={member}
+              canResetPassword={context.role === "super_admin" || context.role === "admin"}
+            />
           ))}
         </div>
       ) : (

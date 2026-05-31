@@ -4,7 +4,7 @@ import { useEffect, useRef } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 
-export function TeamToastSync() {
+export function EventToastSync() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -15,26 +15,15 @@ export function TeamToastSync() {
     const success = searchParams.get("success");
     const message = error ?? success;
 
-    if (!message || message === lastMessageRef.current) {
-      return;
-    }
-
+    if (!message || message === lastMessageRef.current) return;
     lastMessageRef.current = message;
 
-    // Mensagens com senha temporária ficam até admin dispensar manualmente.
-    const isSensitive = /Senha temporária/.test(message);
-    const opts = isSensitive ? { duration: Infinity, closeButton: true } : undefined;
-
-    if (error) {
-      toast.error(error, opts);
-    } else {
-      toast.success(success!, opts);
-    }
+    if (error) toast.error(error);
+    else toast.success(success!);
 
     const nextParams = new URLSearchParams(searchParams.toString());
     nextParams.delete("error");
     nextParams.delete("success");
-
     const nextQuery = nextParams.toString();
     router.replace(nextQuery ? `${pathname}?${nextQuery}` : pathname, { scroll: false });
   }, [pathname, router, searchParams]);

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { ListChecks, ChevronRight } from "lucide-react";
 
 import { getCurrentUserContext } from "@/lib/auth/session";
@@ -14,7 +15,11 @@ const SETTINGS_LINKS = [
 
 export default async function SettingsPage() {
   const context = await getCurrentUserContext();
-  const role = context?.role ?? "";
+  if (!context) redirect("/login");
+  if (!context.role || !["super_admin", "admin"].includes(context.role)) {
+    redirect("/dashboard");
+  }
+  const role = context.role;
 
   return (
     <div className="max-w-3xl space-y-5">

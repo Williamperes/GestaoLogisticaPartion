@@ -19,11 +19,13 @@ export default async function DashboardLayout({ children }: { children: React.Re
       <Sidebar
         userName={context.profile?.fullName ?? context.email ?? "Usuário"}
         userRole={context.role ?? "Sem role"}
+        role={context.role ?? null}
       />
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <TopBar
           userName={context.profile?.fullName ?? context.email ?? "Usuário"}
           userRole={context.role ?? "Sem role"}
+          role={context.role ?? null}
         />
         <main className="flex-1 overflow-y-auto overflow-x-hidden p-4 sm:p-6">{children}</main>
       </div>

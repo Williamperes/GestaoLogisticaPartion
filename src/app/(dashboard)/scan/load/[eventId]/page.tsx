@@ -1,23 +1,35 @@
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 
+import { getCurrentUserContext } from "@/lib/auth/session";
 import { getEventById } from "@/lib/events";
+import { getTeamMemberByUserId, teamMemberHasEventAccess } from "@/lib/team";
 
 import { LoadScanClient } from "./LoadScanClient";
 
 export default async function ScanLoadPage({ params }: { params: Promise<{ eventId: string }> }) {
   const { eventId } = await params;
-  const event = await getEventById(eventId);
+  const [event, context] = await Promise.all([
+    getEventById(eventId),
+    getCurrentUserContext(),
+  ]);
   if (!event) notFound();
 
-  const pending = event.equipment
-    .filter((e) => (e.loadedUnitsCount ?? 0) < e.qty)
-    .map((e) => ({
-      id: e.id,
-      equipmentName: e.equipmentName,
-      variantLabel: e.variantLabel,
-      qty: e.qty,
-      loadedUnitsCount: e.loadedUnitsCount,
-    }));
+  if (context?.role === "warehouse" && context.userId && context.primaryOrganization?.id) {
+    const member = await getTeamMemberByUserId(
+      context.userId,
+      context.primaryOrganization.id
+    );
+    const allowed = member ? await teamMemberHasEventAccess(member.id, eventId) : false;
+    if (!allowed) redirect("/events?error=Sem acesso a esta OS.");
+  }
+
+  const items = event.equipment.map((e) => ({
+    id: e.id,
+    equipmentName: e.equipmentName,
+    variantLabel: e.variantLabel,
+    qty: e.qty,
+    loadedUnitsCount: e.loadedUnitsCount,
+  }));
 
   return (
     <>
@@ -28,7 +40,7 @@ export default async function ScanLoadPage({ params }: { params: Promise<{ event
         </p>
       </header>
 
-      <LoadScanClient eventId={eventId} initialPending={pending} />
+      <LoadScanClient eventId={eventId} initialItems={items} />
     </>
   );
 }

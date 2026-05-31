@@ -29,13 +29,16 @@ export async function scanLoadUnit(
 
   const supabase = createSupabaseAdminClient();
 
-  const { data: eeRow, error: eeErr } = await supabase
+  const eeQuery = supabase
     .from("event_equipment")
     .select("id, qty")
     .eq("event_id", eventId)
-    .eq("equipment_id", unit.equipmentId)
-    .is("variant_id", unit.variantId)
-    .maybeSingle();
+    .eq("equipment_id", unit.equipmentId);
+  const { data: eeRow, error: eeErr } = await (
+    unit.variantId === null
+      ? eeQuery.is("variant_id", null)
+      : eeQuery.eq("variant_id", unit.variantId)
+  ).maybeSingle();
   if (eeErr) return { ok: false, error: eeErr.message };
   if (!eeRow) return { ok: false, error: "Este equipamento não está vinculado à OS" };
 
@@ -95,13 +98,16 @@ export async function scanReturnUnit(
 
   const supabase = createSupabaseAdminClient();
 
-  const { data: eeRow, error: eeErr } = await supabase
+  const eeQuery = supabase
     .from("event_equipment")
     .select("id, qty")
     .eq("event_id", eventId)
-    .eq("equipment_id", unit.equipmentId)
-    .is("variant_id", unit.variantId)
-    .maybeSingle();
+    .eq("equipment_id", unit.equipmentId);
+  const { data: eeRow, error: eeErr } = await (
+    unit.variantId === null
+      ? eeQuery.is("variant_id", null)
+      : eeQuery.eq("variant_id", unit.variantId)
+  ).maybeSingle();
   if (eeErr) return { ok: false, error: eeErr.message };
   if (!eeRow) return { ok: false, error: "Este equipamento não está vinculado à OS" };
 

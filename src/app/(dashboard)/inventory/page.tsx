@@ -1,3 +1,4 @@
+import { redirect } from "next/navigation";
 import { Search, Package } from "lucide-react";
 import Link from "next/link";
 import { StatusBadge } from "@/components/ui/StatusBadge";
@@ -14,7 +15,11 @@ export default async function InventoryPage({ searchParams }: InventoryPageProps
   const search = q?.trim() ?? "";
 
   const context = await getCurrentUserContext();
-  const organizationId = context?.primaryOrganization?.id;
+  if (!context) redirect("/login");
+  if (!context.role || !["super_admin", "admin", "operations"].includes(context.role)) {
+    redirect("/dashboard");
+  }
+  const organizationId = context.primaryOrganization?.id;
 
   const [items, categories] = organizationId
     ? await Promise.all([

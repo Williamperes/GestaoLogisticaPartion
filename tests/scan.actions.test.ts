@@ -158,6 +158,52 @@ describe("scanLoadUnit", () => {
     });
   });
 
+  it("usa .eq('variant_id', X) quando unit tem variantId não-null", async () => {
+    mocks.getEquipmentUnitByQrCode.mockResolvedValue({
+      ...VALID_UNIT,
+      variantId: "var-9",
+    });
+    const eeChain = chain({ data: { id: "ee-1", qty: 1 }, error: null });
+    const supabase = fakeSupabase({
+      event_equipment: [() => eeChain],
+      event_equipment_units: [
+        () => chain({ error: null }),
+        () => chain({ count: 1, error: null }),
+      ],
+    });
+    mocks.createSupabaseAdminClient.mockReturnValue(supabase);
+
+    const result = await scanLoadUnit("evt-1", "QR-VAR");
+    expect(result.ok).toBe(true);
+    const eqCall = eeChain._calls.find(
+      (c) => c.method === "eq" && c.args[0] === "variant_id"
+    );
+    expect(eqCall).toBeDefined();
+    expect(eqCall?.args[1]).toBe("var-9");
+    expect(eeChain._calls.find((c) => c.method === "is")).toBeUndefined();
+  });
+
+  it("usa .is('variant_id', null) quando unit tem variantId null", async () => {
+    mocks.getEquipmentUnitByQrCode.mockResolvedValue(VALID_UNIT);
+    const eeChain = chain({ data: { id: "ee-1", qty: 1 }, error: null });
+    const supabase = fakeSupabase({
+      event_equipment: [() => eeChain],
+      event_equipment_units: [
+        () => chain({ error: null }),
+        () => chain({ count: 1, error: null }),
+      ],
+    });
+    mocks.createSupabaseAdminClient.mockReturnValue(supabase);
+
+    const result = await scanLoadUnit("evt-1", "QR-NULL");
+    expect(result.ok).toBe(true);
+    const isCall = eeChain._calls.find(
+      (c) => c.method === "is" && c.args[0] === "variant_id"
+    );
+    expect(isCall).toBeDefined();
+    expect(isCall?.args[1]).toBeNull();
+  });
+
   it("NÃO marca loaded=true se ainda faltam units", async () => {
     mocks.getEquipmentUnitByQrCode.mockResolvedValue(VALID_UNIT);
     const supabase = fakeSupabase({

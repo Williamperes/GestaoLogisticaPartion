@@ -20,4 +20,5 @@ export interface TeamMember {
   available: boolean;
   notes: string | null;
   createdAt: string;
+  userId: string | null;
 }
