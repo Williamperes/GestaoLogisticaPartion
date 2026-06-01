@@ -33,7 +33,7 @@ export interface EquipmentUnit {
   id: string;
   equipmentId: string;
   variantId: string | null;
-  serial: string;
+  serial: string | null;
   patrimony: string | null;
   status: EquipmentStatus;
   qrCode: string | null;
@@ -304,7 +304,7 @@ export async function getEquipmentById(id: string): Promise<EquipmentWithUnits |
     (data.equipment_units as unknown as {
       id: string;
       variant_id: string | null;
-      serial: string;
+      serial: string | null;
       patrimony: string | null;
       status: string;
       qr_code: string | null;

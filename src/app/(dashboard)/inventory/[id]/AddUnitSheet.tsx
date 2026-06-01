@@ -43,7 +43,8 @@ export function AddUnitSheet({ equipmentId, variants }: AddUnitSheetProps) {
         <SheetHeader className="border-b border-border px-6 py-5">
           <SheetTitle>Adicionar unidade</SheetTitle>
           <SheetDescription>
-            Insira os dados da nova unidade serializada. Um QR Code será gerado automaticamente.
+            Informe a quantidade de unidades a criar. Cada unidade recebe um QR Code
+            próprio automaticamente. O número de série é opcional.
           </SheetDescription>
         </SheetHeader>
 
@@ -68,13 +69,32 @@ export function AddUnitSheet({ equipmentId, variants }: AddUnitSheetProps) {
             )}
 
             <label className="space-y-1.5">
-              <span className="text-sm font-medium text-foreground">Número de série *</span>
+              <span className="text-sm font-medium text-foreground">Quantidade *</span>
               <input
-                name="serial"
+                name="quantity"
+                type="number"
+                min={1}
+                max={200}
+                step={1}
+                defaultValue={1}
                 required
-                placeholder="Ex.: PM7-0042"
                 className={INPUT_CLASS}
               />
+              <span className="text-xs text-muted-foreground">
+                Cria essa quantidade de unidades, cada uma com seu próprio QR Code.
+              </span>
+            </label>
+
+            <label className="space-y-1.5">
+              <span className="text-sm font-medium text-foreground">Número de série</span>
+              <input
+                name="serial"
+                placeholder="Opcional — ex.: PM7-0042"
+                className={INPUT_CLASS}
+              />
+              <span className="text-xs text-muted-foreground">
+                Deixe em branco ao cadastrar várias unidades de uma vez.
+              </span>
             </label>
 
             <label className="space-y-1.5">

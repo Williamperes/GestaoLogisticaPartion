@@ -224,7 +224,9 @@ export default async function InventoryDetailPage({ params, searchParams }: Prop
               <tbody className="divide-y divide-border">
                 {equipment.units.map((unit) => (
                   <tr key={unit.id} className="group">
-                    <td className="px-5 py-3 font-mono text-xs">{unit.serial}</td>
+                    <td className="px-5 py-3 font-mono text-xs">
+                      {unit.serial ?? <span className="text-muted-foreground">—</span>}
+                    </td>
                     <td className="hidden px-4 py-3 font-mono text-xs text-muted-foreground md:table-cell">
                       {unit.patrimony ?? "—"}
                     </td>
@@ -238,12 +240,12 @@ export default async function InventoryDetailPage({ params, searchParams }: Prop
                           {canWrite && (
                             <LinkQrButton
                               unitId={unit.id}
-                              unitSerial={unit.serial}
+                              unitSerial={unit.serial ?? "unidade sem série"}
                             />
                           )}
                         </div>
                       ) : canWrite ? (
-                        <LinkQrButton unitId={unit.id} unitSerial={unit.serial} />
+                        <LinkQrButton unitId={unit.id} unitSerial={unit.serial ?? "unidade sem série"} />
                       ) : (
                         <span className="text-xs italic text-muted-foreground">
                           Sem QR
@@ -266,7 +268,7 @@ export default async function InventoryDetailPage({ params, searchParams }: Prop
                         <DeleteConfirmDialog
                           action={deleteEquipmentUnit}
                           itemId={unit.id}
-                          itemName={unit.serial}
+                          itemName={unit.serial ?? "unidade sem série"}
                           itemLabel="unidade"
                           hiddenFieldName="unitId"
                           title="Remover unidade"

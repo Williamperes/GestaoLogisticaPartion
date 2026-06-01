@@ -280,14 +280,17 @@ describe("inventory actions", () => {
   // ── addEquipmentUnit ──────────────────────────────────────────────
 
   describe("addEquipmentUnit", () => {
-    it("inserts unit, generates QR code, and redirects with success", async () => {
+    // Helper: monta o mock do client para o fluxo insert(array).select("id")
+    // seguido de N updates de qr_code. `unitIds` é o que o insert "retorna".
+    function buildUnitsClient(unitIds: string[]) {
+      const insertSelect = vi
+        .fn()
+        .mockResolvedValue({ data: unitIds.map((id) => ({ id })), error: null });
+      const insertFn = vi.fn().mockReturnValue({ select: insertSelect });
+
       const updateResult = vi.fn().mockResolvedValue({ error: null });
       const updateEqFn = vi.fn().mockReturnValue(updateResult);
       const updateFn = vi.fn().mockReturnValue({ eq: updateEqFn });
-
-      const insertSingle = vi.fn().mockResolvedValue({ data: { id: "unit-new" }, error: null });
-      const insertSelectFn = vi.fn().mockReturnValue({ single: insertSingle });
-      const insertFn = vi.fn().mockReturnValue({ select: insertSelectFn });
 
       mocks.createSupabaseAdminClient.mockReturnValue({
         from: vi.fn((table: string) => {
@@ -295,6 +298,11 @@ describe("inventory actions", () => {
           return {};
         }),
       });
+      return { insertFn, insertSelect, updateFn, updateEqFn };
+    }
+
+    it("inserts a single unit, generates QR code, and redirects with success", async () => {
+      const { insertFn, updateFn } = buildUnitsClient(["unit-new"]);
       mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
 
       await expect(
@@ -308,23 +316,88 @@ describe("inventory actions", () => {
         )
       ).rejects.toThrow("NEXT_REDIRECT:/inventory/equip-1?success=Unidade adicionada.");
 
-      expect(insertFn).toHaveBeenCalledWith(
+      // insert recebe um ARRAY (mesmo com 1 unidade).
+      expect(insertFn).toHaveBeenCalledWith([
         expect.objectContaining({
           equipment_id: "equip-1",
           serial: "PM7-0002",
           patrimony: "PAT-002",
           status: "available",
-        })
-      );
+        }),
+      ]);
       expect(mocks.generateQrToken).toHaveBeenCalledWith("UN", "unit-new");
+      expect(updateFn).toHaveBeenCalledTimes(1);
       expect(mocks.revalidatePath).toHaveBeenCalledWith("/inventory/equip-1");
     });
 
-    it("rejects when serial is empty", async () => {
+    it("creates N units when quantity > 1, each with its own QR code", async () => {
+      const { insertFn, updateFn } = buildUnitsClient(["u1", "u2", "u3"]);
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+
+      await expect(
+        addEquipmentUnit(
+          buildFormData({ equipmentId: "equip-1", serial: "", quantity: "3" })
+        )
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory/equip-1?success=3 unidades adicionadas.");
+
+      // 3 rows no array, cada uma com serial null (campo opcional vazio).
+      const insertedRows = insertFn.mock.calls[0][0] as Array<{ serial: string | null }>;
+      expect(insertedRows).toHaveLength(3);
+      expect(insertedRows.every((r) => r.serial === null)).toBe(true);
+
+      // Um QR gerado por unidade, derivado do id de cada uma.
+      expect(mocks.generateQrToken).toHaveBeenCalledTimes(3);
+      expect(mocks.generateQrToken).toHaveBeenCalledWith("UN", "u1");
+      expect(mocks.generateQrToken).toHaveBeenCalledWith("UN", "u2");
+      expect(mocks.generateQrToken).toHaveBeenCalledWith("UN", "u3");
+      expect(updateFn).toHaveBeenCalledTimes(3);
+    });
+
+    it("treats empty serial/patrimony as null (serial is optional)", async () => {
+      const { insertFn } = buildUnitsClient(["unit-x"]);
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+
+      await expect(
+        addEquipmentUnit(
+          buildFormData({ equipmentId: "equip-1", serial: "  ", patrimony: "" })
+        )
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory/equip-1?success=Unidade adicionada.");
+
+      expect(insertFn).toHaveBeenCalledWith([
+        expect.objectContaining({ serial: null, patrimony: null }),
+      ]);
+    });
+
+    it("rejects when equipmentId is missing", async () => {
       mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
       await expect(
-        addEquipmentUnit(buildFormData({ equipmentId: "equip-1", serial: "" }))
-      ).rejects.toThrow("NEXT_REDIRECT:/inventory/equip-1?error=Número de série é obrigatório.");
+        addEquipmentUnit(buildFormData({ equipmentId: "", serial: "X" }))
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory?error=Equipamento inválido.");
+    });
+
+    it("rejects when quantity is zero", async () => {
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+      await expect(
+        addEquipmentUnit(buildFormData({ equipmentId: "equip-1", quantity: "0" }))
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory/equip-1?error=Quantidade%20deve%20estar");
+    });
+
+    it("rejects when quantity exceeds the batch limit", async () => {
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+      await expect(
+        addEquipmentUnit(buildFormData({ equipmentId: "equip-1", quantity: "201" }))
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory/equip-1?error=Quantidade%20deve%20estar");
+    });
+
+    it("defaults quantity to 1 when not provided", async () => {
+      const { insertFn } = buildUnitsClient(["only-unit"]);
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+
+      await expect(
+        addEquipmentUnit(buildFormData({ equipmentId: "equip-1", serial: "S1" }))
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory/equip-1?success=Unidade adicionada.");
+
+      expect((insertFn.mock.calls[0][0] as unknown[])).toHaveLength(1);
     });
   });
 
@@ -899,14 +972,14 @@ describe("inventory actions", () => {
   // ── addEquipmentUnit (com variantId) ───────────────────────────────
 
   describe("addEquipmentUnit with variantId", () => {
-    it("persists variant_id when provided", async () => {
+    it("persists variant_id on every row when provided", async () => {
+      const insertSelect = vi
+        .fn()
+        .mockResolvedValue({ data: [{ id: "unit-2" }, { id: "unit-3" }], error: null });
+      const insertFn = vi.fn().mockReturnValue({ select: insertSelect });
       const updateResult = vi.fn().mockResolvedValue({ error: null });
       const updateEqFn = vi.fn().mockReturnValue(updateResult);
       const updateFn = vi.fn().mockReturnValue({ eq: updateEqFn });
-
-      const insertSingle = vi.fn().mockResolvedValue({ data: { id: "unit-2" }, error: null });
-      const insertSelectFn = vi.fn().mockReturnValue({ single: insertSingle });
-      const insertFn = vi.fn().mockReturnValue({ select: insertSelectFn });
 
       mocks.createSupabaseAdminClient.mockReturnValue({
         from: vi.fn((table: string) => {
@@ -920,22 +993,18 @@ describe("inventory actions", () => {
         addEquipmentUnit(
           buildFormData({
             equipmentId: "eq-1",
-            serial: "XLR-5M-001",
+            serial: "",
             patrimony: "",
             notes: "",
             variantId: "v-5m",
+            quantity: "2",
           })
         )
-      ).rejects.toThrow("NEXT_REDIRECT:/inventory/eq-1?success=Unidade adicionada.");
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory/eq-1?success=2 unidades adicionadas.");
 
-      expect(insertFn).toHaveBeenCalledWith(
-        expect.objectContaining({
-          equipment_id: "eq-1",
-          variant_id: "v-5m",
-          serial: "XLR-5M-001",
-          status: "available",
-        })
-      );
+      const rows = insertFn.mock.calls[0][0] as Array<{ variant_id: string }>;
+      expect(rows).toHaveLength(2);
+      expect(rows.every((r) => r.variant_id === "v-5m")).toBe(true);
     });
   });
 

@@ -172,13 +172,10 @@ export function InventorySheet({ categories }: InventorySheetProps) {
                 </p>
                 <div className="grid gap-4 sm:grid-cols-2">
                   <label className={LABEL_CLASS}>
-                    <span className={LABEL_TEXT_CLASS}>
-                      Número de série {hasVariants ? "" : "*"}
-                    </span>
+                    <span className={LABEL_TEXT_CLASS}>Número de série</span>
                     <input
                       name="serial"
-                      required={!hasVariants}
-                      placeholder="Ex.: PM7-0042"
+                      placeholder="Opcional — ex.: PM7-0042"
                       className={INPUT_CLASS}
                     />
                   </label>

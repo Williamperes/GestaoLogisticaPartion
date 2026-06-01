@@ -63,7 +63,7 @@ export async function createEquipment(formData: FormData) {
   }
 
   if (type === "serialized") {
-    const serial = String(formData.get("serial") ?? "").trim();
+    const serial = String(formData.get("serial") ?? "").trim() || null;
     const patrimony = String(formData.get("patrimony") ?? "").trim() || null;
     const purchaseDateRaw = String(formData.get("purchaseDate") ?? "").trim() || null;
     const purchaseValueRaw = String(formData.get("purchaseValue") ?? "").trim();
@@ -291,43 +291,74 @@ export async function updateEquipment(formData: FormData) {
 // addEquipmentUnit
 // Adiciona uma unidade serializada a um equipamento existente.
 // ──────────────────────────────────────────────────────────────────
+const MAX_UNITS_PER_BATCH = 200;
+
 export async function addEquipmentUnit(formData: FormData) {
   await requireWriteRole();
 
   const equipmentId = String(formData.get("equipmentId") ?? "").trim();
-  const serial = String(formData.get("serial") ?? "").trim();
+  // Série e patrimônio são opcionais — o identificador real é o qr_code.
+  const serial = String(formData.get("serial") ?? "").trim() || null;
   const patrimony = String(formData.get("patrimony") ?? "").trim() || null;
   const notes = String(formData.get("notes") ?? "").trim() || null;
   const variantId = String(formData.get("variantId") ?? "").trim() || null;
 
-  if (!equipmentId || !serial) {
-    redirect(`/inventory/${equipmentId}?error=Número de série é obrigatório.`);
+  const quantityRaw = parseInt(String(formData.get("quantity") ?? "1"), 10);
+  const quantity = isNaN(quantityRaw) ? 1 : quantityRaw;
+
+  if (!equipmentId) {
+    redirect(`/inventory?error=Equipamento inválido.`);
+  }
+  if (quantity < 1 || quantity > MAX_UNITS_PER_BATCH) {
+    redirect(
+      `/inventory/${equipmentId}?error=${encodeURIComponent(
+        `Quantidade deve estar entre 1 e ${MAX_UNITS_PER_BATCH}.`
+      )}`
+    );
   }
 
   const supabase = createSupabaseAdminClient();
 
-  const { data: unit, error: insertError } = await supabase
-    .from("equipment_units")
-    .insert({
-      equipment_id: equipmentId,
-      variant_id: variantId,
-      serial,
-      patrimony,
-      notes,
-      status: "available",
-    })
-    .select("id")
-    .single();
+  // Cria N unidades de uma vez. Série/patrimônio (se informados) são
+  // aplicados a todas — o normal ao usar quantidade > 1 é deixá-los em branco.
+  const rows = Array.from({ length: quantity }, () => ({
+    equipment_id: equipmentId,
+    variant_id: variantId,
+    serial,
+    patrimony,
+    notes,
+    status: "available" as const,
+  }));
 
-  if (insertError) {
-    redirect(`/inventory/${equipmentId}?error=${encodeURIComponent(insertError.message)}`);
+  const { data: units, error: insertError } = await supabase
+    .from("equipment_units")
+    .insert(rows)
+    .select("id");
+
+  if (insertError || !units) {
+    redirect(
+      `/inventory/${equipmentId}?error=${encodeURIComponent(
+        insertError?.message ?? "Falha ao criar unidades."
+      )}`
+    );
   }
 
-  const qrCode = generateQrToken("UN", unit.id);
-  await supabase.from("equipment_units").update({ qr_code: qrCode }).eq("id", unit.id);
+  // Cada unidade recebe um QR único derivado do seu próprio id.
+  await Promise.all(
+    units.map((unit) =>
+      supabase
+        .from("equipment_units")
+        .update({ qr_code: generateQrToken("UN", unit.id) })
+        .eq("id", unit.id)
+    )
+  );
 
   revalidatePath(`/inventory/${equipmentId}`);
-  redirect(`/inventory/${equipmentId}?success=Unidade adicionada.`);
+  redirect(
+    `/inventory/${equipmentId}?success=${
+      quantity === 1 ? "Unidade adicionada." : `${quantity} unidades adicionadas.`
+    }`
+  );
 }
 
 // ──────────────────────────────────────────────────────────────────
