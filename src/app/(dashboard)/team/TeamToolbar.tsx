@@ -69,6 +69,15 @@ export function TeamToolbar({ canProvision }: { canProvision: boolean }) {
                     required
                   />
                 </label>
+
+                <label className="space-y-2">
+                  <span className="text-sm font-medium text-foreground">Cidade</span>
+                  <input
+                    name="city"
+                    placeholder="Ex.: São Paulo"
+                    className="w-full rounded-2xl border border-border bg-background px-4 py-3 text-sm outline-none transition focus:border-primary/50 focus:ring-4 focus:ring-primary/10"
+                  />
+                </label>
               </div>
 
               <div className="grid gap-4 sm:grid-cols-2">

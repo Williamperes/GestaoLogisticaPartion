@@ -17,6 +17,7 @@ export interface TeamMember {
   role: string;
   phone: string | null;
   email: string | null;
+  city: string | null;
   available: boolean;
   notes: string | null;
   createdAt: string;

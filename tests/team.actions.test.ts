@@ -33,6 +33,7 @@ vi.mock("@/lib/team", () => ({
 import {
   createTeamMember,
   deleteTeamMember,
+  provisionTeamMemberAccess,
   resetTeamMemberPassword,
   updateTeamMember,
 } from "@/app/(dashboard)/team/actions";
@@ -95,11 +96,38 @@ describe("team actions", () => {
       role: "Operador FOH",
       phone: "11999999999",
       email: "diego@partion.com",
+      city: null,
       notes: "Disponivel para viagens",
       available: true,
       user_id: null,
     });
     expect(mocks.revalidatePath).toHaveBeenCalledWith("/team");
+  });
+
+  it("persists the city when provided on create", async () => {
+    const insert = vi.fn().mockResolvedValue({ error: null });
+
+    mocks.getCurrentUserContext.mockResolvedValue({
+      role: "admin",
+      primaryOrganization: { id: "org-1" },
+    });
+    mocks.ensureTeamSpecialty.mockResolvedValue({ id: "specialty-1" });
+    mocks.createSupabaseAdminClient.mockReturnValue({
+      from: vi.fn().mockReturnValue({ insert }),
+    });
+
+    await expect(
+      createTeamMember(
+        buildFormData({ name: "Diego", role: "FOH", city: "  São Paulo  " })
+      )
+    ).rejects.toThrow(
+      `NEXT_REDIRECT:/team?success=${encodeURIComponent("Técnico cadastrado.")}`
+    );
+
+    // city é trimada e persistida.
+    expect(insert).toHaveBeenCalledWith(
+      expect.objectContaining({ city: "São Paulo" })
+    );
   });
 
   it("updates a team member scoped by id and organization", async () => {
@@ -137,6 +165,7 @@ describe("team actions", () => {
       role: "Luz",
       phone: "11888888888",
       email: "camila@partion.com",
+      city: null,
       notes: "Plantao noturno",
       available: false,
     });
@@ -349,6 +378,131 @@ describe("team actions", () => {
     await expect(
       resetTeamMemberPassword(buildFormData({ id: "member-1", password: "abc" }))
     ).rejects.toThrow(/8 caracteres/);
+  });
+
+  it("provisions access for an existing member: creates user, org member, links user_id", async () => {
+    const maybeSingle = vi.fn().mockResolvedValue({
+      data: { user_id: null, email: "diego@partion.com", name: "Diego Almeida" },
+      error: null,
+    });
+    const selectEqOrg = vi.fn(() => ({ maybeSingle }));
+    const selectEqId = vi.fn(() => ({ eq: selectEqOrg }));
+    const select = vi.fn(() => ({ eq: selectEqId }));
+
+    const updateEqOrg = vi.fn().mockResolvedValue({ error: null });
+    const updateEqId = vi.fn(() => ({ eq: updateEqOrg }));
+    const update = vi.fn(() => ({ eq: updateEqId }));
+
+    const orgInsert = vi.fn().mockResolvedValue({ error: null });
+    const createUser = vi.fn().mockResolvedValue({
+      data: { user: { id: "user-new" } },
+      error: null,
+    });
+    const deleteUser = vi.fn();
+
+    mocks.getCurrentUserContext.mockResolvedValue({
+      role: "admin",
+      primaryOrganization: { id: "org-1" },
+    });
+
+    const from = vi.fn((table: string) => {
+      if (table === "team_members") return { select, update };
+      if (table === "organization_members") return { insert: orgInsert };
+      throw new Error(`Unexpected table: ${table}`);
+    });
+
+    mocks.createSupabaseAdminClient.mockReturnValue({
+      from,
+      auth: { admin: { createUser, deleteUser } },
+    });
+
+    await expect(
+      provisionTeamMemberAccess(
+        buildFormData({
+          id: "member-1",
+          access_role: "warehouse",
+          password: "tempPass123",
+        })
+      )
+    ).rejects.toThrow(/Acesso%20criado/);
+
+    expect(createUser).toHaveBeenCalledWith({
+      email: "diego@partion.com",
+      password: "tempPass123",
+      email_confirm: true,
+      user_metadata: { full_name: "Diego Almeida" },
+    });
+    expect(orgInsert).toHaveBeenCalledWith({
+      user_id: "user-new",
+      organization_id: "org-1",
+      role: "warehouse",
+      is_primary: true,
+    });
+    expect(update).toHaveBeenCalledWith({ user_id: "user-new" });
+    expect(deleteUser).not.toHaveBeenCalled();
+  });
+
+  it("provision access denied for non-admin", async () => {
+    mocks.getCurrentUserContext.mockResolvedValue({
+      role: "operations",
+      primaryOrganization: { id: "org-1" },
+    });
+
+    await expect(
+      provisionTeamMemberAccess(
+        buildFormData({ id: "member-1", access_role: "warehouse", password: "longpass1" })
+      )
+    ).rejects.toThrow(/Apenas administradores/);
+  });
+
+  it("provision access rejects when member already has user_id", async () => {
+    const maybeSingle = vi.fn().mockResolvedValue({
+      data: { user_id: "user-9", email: "x@y.com", name: "X" },
+      error: null,
+    });
+    const eqOrg = vi.fn(() => ({ maybeSingle }));
+    const eqId = vi.fn(() => ({ eq: eqOrg }));
+    const select = vi.fn(() => ({ eq: eqId }));
+
+    mocks.getCurrentUserContext.mockResolvedValue({
+      role: "admin",
+      primaryOrganization: { id: "org-1" },
+    });
+    mocks.createSupabaseAdminClient.mockReturnValue({
+      from: vi.fn(() => ({ select })),
+      auth: { admin: { createUser: vi.fn() } },
+    });
+
+    await expect(
+      provisionTeamMemberAccess(
+        buildFormData({ id: "member-1", access_role: "warehouse", password: "longpass1" })
+      )
+    ).rejects.toThrow(/já possui acesso/);
+  });
+
+  it("provision access rejects when member has no email", async () => {
+    const maybeSingle = vi.fn().mockResolvedValue({
+      data: { user_id: null, email: null, name: "X" },
+      error: null,
+    });
+    const eqOrg = vi.fn(() => ({ maybeSingle }));
+    const eqId = vi.fn(() => ({ eq: eqOrg }));
+    const select = vi.fn(() => ({ eq: eqId }));
+
+    mocks.getCurrentUserContext.mockResolvedValue({
+      role: "admin",
+      primaryOrganization: { id: "org-1" },
+    });
+    mocks.createSupabaseAdminClient.mockReturnValue({
+      from: vi.fn(() => ({ select })),
+      auth: { admin: { createUser: vi.fn() } },
+    });
+
+    await expect(
+      provisionTeamMemberAccess(
+        buildFormData({ id: "member-1", access_role: "warehouse", password: "longpass1" })
+      )
+    ).rejects.toThrow(/Cadastre um email/);
   });
 
   it("deletes a team member scoped by id and organization", async () => {

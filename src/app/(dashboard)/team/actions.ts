@@ -30,6 +30,7 @@ export async function createTeamMember(formData: FormData) {
   const role = String(formData.get("role") ?? "").trim();
   const phone = String(formData.get("phone") ?? "").trim() || null;
   const email = String(formData.get("email") ?? "").trim() || null;
+  const city = String(formData.get("city") ?? "").trim() || null;
   const notes = String(formData.get("notes") ?? "").trim() || null;
   const available = formData.get("available") === "on";
 
@@ -96,6 +97,7 @@ export async function createTeamMember(formData: FormData) {
     role,
     phone,
     email,
+    city,
     notes,
     available,
     user_id: provisionedUserId,
@@ -130,6 +132,7 @@ export async function updateTeamMember(formData: FormData) {
   const role = String(formData.get("role") ?? "").trim();
   const phone = String(formData.get("phone") ?? "").trim() || null;
   const email = String(formData.get("email") ?? "").trim() || null;
+  const city = String(formData.get("city") ?? "").trim() || null;
   const notes = String(formData.get("notes") ?? "").trim() || null;
   const available = formData.get("available") === "on";
 
@@ -145,6 +148,7 @@ export async function updateTeamMember(formData: FormData) {
       role,
       phone,
       email,
+      city,
       notes,
       available,
     })
@@ -157,6 +161,96 @@ export async function updateTeamMember(formData: FormData) {
 
   revalidatePath("/team");
   redirect(`/team?success=${encodeURIComponent("Técnico atualizado.")}`);
+}
+
+export async function provisionTeamMemberAccess(formData: FormData) {
+  const context = await getCurrentUserContext();
+
+  if (!context || !ensureProvisioningPermission(context.role)) {
+    redirect("/team?error=Apenas administradores podem criar acesso ao sistema.");
+  }
+
+  const organizationId = context.primaryOrganization?.id;
+  const id = String(formData.get("id") ?? "").trim();
+  const accessRoleRaw = String(formData.get("access_role") ?? "").trim();
+  const password = String(formData.get("password") ?? "");
+
+  if (!organizationId || !id) {
+    redirect("/team?error=Técnico inválido.");
+  }
+  if (!ACCESS_ROLES.has(accessRoleRaw as AccessRole)) {
+    redirect("/team?error=Permissão de acesso inválida.");
+  }
+  if (password.length < 8) {
+    redirect("/team?error=Senha deve ter ao menos 8 caracteres.");
+  }
+
+  const supabase = createSupabaseAdminClient();
+  const { data: member, error: memberErr } = await supabase
+    .from("team_members")
+    .select("user_id, email, name")
+    .eq("id", id)
+    .eq("organization_id", organizationId)
+    .maybeSingle();
+
+  if (memberErr) {
+    redirect(`/team?error=${encodeURIComponent(memberErr.message)}`);
+  }
+  if (!member) {
+    redirect("/team?error=Técnico inválido.");
+  }
+  if (member.user_id) {
+    redirect("/team?error=Este técnico já possui acesso ao app.");
+  }
+  if (!member.email) {
+    redirect("/team?error=Cadastre um email no técnico antes de criar acesso.");
+  }
+
+  const { data: created, error: authErr } = await supabase.auth.admin.createUser({
+    email: member.email,
+    password,
+    email_confirm: true,
+    user_metadata: { full_name: member.name },
+  });
+  if (authErr || !created.user) {
+    const msg = authErr?.message ?? "Não foi possível criar acesso.";
+    redirect(`/team?error=${encodeURIComponent(msg)}`);
+  }
+  const provisionedUserId = created.user.id;
+
+  const { error: orgErr } = await supabase
+    .from("organization_members")
+    .insert({
+      user_id: provisionedUserId,
+      organization_id: organizationId,
+      role: accessRoleRaw,
+      is_primary: true,
+    });
+  if (orgErr) {
+    // Compensa: remove auth user que foi criado mas não pôde virar membro.
+    await supabase.auth.admin.deleteUser(provisionedUserId);
+    redirect(`/team?error=${encodeURIComponent(orgErr.message)}`);
+  }
+
+  const { error: linkErr } = await supabase
+    .from("team_members")
+    .update({ user_id: provisionedUserId })
+    .eq("id", id)
+    .eq("organization_id", organizationId);
+  if (linkErr) {
+    // Compensa: desfaz membro e auth user para não deixar acesso órfão.
+    await supabase
+      .from("organization_members")
+      .delete()
+      .eq("user_id", provisionedUserId)
+      .eq("organization_id", organizationId);
+    await supabase.auth.admin.deleteUser(provisionedUserId);
+    redirect(`/team?error=${encodeURIComponent(linkErr.message)}`);
+  }
+
+  revalidatePath("/team");
+  const msg = `Acesso criado para ${member.email}. Senha temporária: ${password} — anote, não será mostrada novamente.`;
+  redirect(`/team?success=${encodeURIComponent(msg)}`);
 }
 
 export async function resetTeamMemberPassword(formData: FormData) {

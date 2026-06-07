@@ -42,7 +42,7 @@ export default async function TeamPage() {
             <TeamMemberCard
               key={member.id}
               member={member}
-              canResetPassword={context.role === "super_admin" || context.role === "admin"}
+              canManageAccess={context.role === "super_admin" || context.role === "admin"}
             />
           ))}
         </div>

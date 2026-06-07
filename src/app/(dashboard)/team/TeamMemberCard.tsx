@@ -1,9 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { KeyRound, Mail, Pencil, Trash2, UserRound } from "lucide-react";
+import { KeyRound, Mail, MapPin, Pencil, ShieldPlus, Trash2, UserRound } from "lucide-react";
 import {
   deleteTeamMember,
+  provisionTeamMemberAccess,
   resetTeamMemberPassword,
   updateTeamMember,
 } from "@/app/(dashboard)/team/actions";
@@ -32,10 +33,10 @@ function generatePassword(length = 14) {
 
 export function TeamMemberCard({
   member,
-  canResetPassword,
+  canManageAccess,
 }: {
   member: TeamMember;
-  canResetPassword: boolean;
+  canManageAccess: boolean;
 }) {
   const [hovered, setHovered] = useState(false);
   const [open, setOpen] = useState(false);
@@ -95,6 +96,16 @@ export function TeamMemberCard({
                         required
                       />
                     </label>
+
+                    <label className="space-y-2">
+                      <span className="text-sm font-medium text-foreground">Cidade</span>
+                      <input
+                        name="city"
+                        defaultValue={member.city ?? ""}
+                        placeholder="Ex.: São Paulo"
+                        className="w-full rounded-2xl border border-border bg-background px-4 py-3 text-sm outline-none transition focus:border-primary/50 focus:ring-4 focus:ring-primary/10"
+                      />
+                    </label>
                   </div>
 
                   <div className="grid gap-4 sm:grid-cols-2">
@@ -136,8 +147,16 @@ export function TeamMemberCard({
             </SheetContent>
           </Sheet>
 
-          {canResetPassword && member.userId && (
+          {canManageAccess && member.userId && (
             <ResetPasswordButton memberId={member.id} memberName={member.name} />
+          )}
+
+          {canManageAccess && !member.userId && (
+            <ProvisionAccessButton
+              memberId={member.id}
+              memberName={member.name}
+              memberEmail={member.email}
+            />
           )}
 
           <DeleteTeamMemberButton memberId={member.id} memberName={member.name} />
@@ -159,6 +178,10 @@ export function TeamMemberCard({
           <div className="flex items-center gap-1.5">
             <Mail className="w-3 h-3" />
             {member.email ?? "Email não informado"}
+          </div>
+          <div className="flex items-center gap-1.5">
+            <MapPin className="w-3 h-3" />
+            {member.city ?? "Cidade não informada"}
           </div>
         </div>
       )}
@@ -258,6 +281,98 @@ function ResetPasswordButton({
             Redefinir senha
           </Button>
         </form>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+function ProvisionAccessButton({
+  memberId,
+  memberName,
+  memberEmail,
+}: {
+  memberId: string;
+  memberName: string;
+  memberEmail: string | null;
+}) {
+  const [open, setOpen] = useState(false);
+  const [password, setPassword] = useState("");
+
+  return (
+    <Sheet open={open} onOpenChange={setOpen}>
+      <SheetTrigger
+        render={
+          <button
+            type="button"
+            title="Criar acesso ao app"
+            className="inline-flex size-7 items-center justify-center rounded-xl border border-emerald-500/30 bg-background text-emerald-600 transition hover:border-emerald-500/40 hover:bg-emerald-500/8"
+          />
+        }
+      >
+        <ShieldPlus className="h-4 w-4" />
+      </SheetTrigger>
+
+      <SheetContent side="right" className="w-full max-w-md border-l border-border bg-background p-0">
+        <SheetHeader className="border-b border-border px-6 py-5">
+          <SheetTitle>Criar acesso ao app</SheetTitle>
+          <SheetDescription>
+            Gera login para <strong>{memberName}</strong>. Anote a senha — será exibida apenas uma vez.
+          </SheetDescription>
+        </SheetHeader>
+
+        {memberEmail ? (
+          <form action={provisionTeamMemberAccess} className="space-y-4 px-6 py-6">
+            <input type="hidden" name="id" value={memberId} />
+
+            <div className="rounded-2xl border border-border bg-muted/40 px-4 py-3 text-sm">
+              <span className="text-muted-foreground">Email de acesso: </span>
+              <strong className="text-foreground">{memberEmail}</strong>
+            </div>
+
+            <label className="space-y-2 block">
+              <span className="text-sm font-medium text-foreground">Senha temporária</span>
+              <div className="flex gap-2">
+                <input
+                  name="password"
+                  type="text"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  minLength={8}
+                  required
+                  placeholder="Mínimo 8 caracteres"
+                  className="flex-1 rounded-2xl border border-border bg-background px-4 py-3 text-sm outline-none transition focus:border-primary/50 focus:ring-4 focus:ring-primary/10"
+                />
+                <button
+                  type="button"
+                  onClick={() => setPassword(generatePassword())}
+                  className="rounded-2xl border border-border bg-background px-3 text-xs font-semibold hover:bg-muted"
+                >
+                  Gerar
+                </button>
+              </div>
+            </label>
+
+            <label className="space-y-2 block">
+              <span className="text-sm font-medium text-foreground">Permissão</span>
+              <select
+                name="access_role"
+                defaultValue="warehouse"
+                className="w-full rounded-2xl border border-border bg-background px-4 py-3 text-sm outline-none transition focus:border-primary/50 focus:ring-4 focus:ring-primary/10"
+              >
+                <option value="warehouse">Almoxarife (bipa carregar/retornar)</option>
+                <option value="operations">Operações (acesso completo de OS)</option>
+              </select>
+            </label>
+
+            <Button type="submit" className="h-11 w-full rounded-2xl text-sm font-semibold">
+              Criar acesso
+            </Button>
+          </form>
+        ) : (
+          <div className="px-6 py-6 text-sm text-muted-foreground">
+            Cadastre um email para <strong>{memberName}</strong> na edição do técnico antes de criar o acesso.
+          </div>
+        )}
       </SheetContent>
     </Sheet>
   );
