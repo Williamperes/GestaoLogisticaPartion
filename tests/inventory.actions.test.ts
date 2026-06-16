@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   createSupabaseAdminClient: vi.fn(),
   getCurrentUserContext: vi.fn(),
   generateQrToken: vi.fn((prefix: string, id: string) => `PTN-${prefix}-${id.slice(0, 12)}`),
+  getEquipmentAllocations: vi.fn(),
 }));
 
 vi.mock("next/navigation", () => ({ redirect: mocks.redirect }));
@@ -20,7 +21,11 @@ vi.mock("@/lib/auth/session", () => ({
 }));
 vi.mock("@/lib/inventory", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/inventory")>();
-  return { ...actual, generateQrToken: mocks.generateQrToken };
+  return {
+    ...actual,
+    generateQrToken: mocks.generateQrToken,
+    getEquipmentAllocations: mocks.getEquipmentAllocations,
+  };
 });
 
 import {
@@ -39,6 +44,7 @@ import {
   deleteEquipmentVariant,
   updateBulkInventoryVariant,
   setUnitQrCode,
+  deleteEquipment,
 } from "@/app/(dashboard)/inventory/actions";
 
 function buildFormData(values: Record<string, string>) {
@@ -419,7 +425,12 @@ describe("inventory actions", () => {
 
       const result = await setUnitQrCode("u1", "QR-001");
       expect(result.ok).toBe(true);
-      expect(updateFn).toHaveBeenCalledWith({ qr_code: "QR-001" });
+      expect(updateFn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          qr_code: "QR-001",
+          qr_linked_at: expect.any(String),
+        })
+      );
       expect(mocks.revalidatePath).toHaveBeenCalledWith("/inventory/eq-1");
     });
 
@@ -1159,6 +1170,994 @@ describe("inventory actions", () => {
           })
         )
       ).rejects.toThrow(/Permitimos apenas 1 n[íi]vel/);
+    });
+  });
+
+  // ── createEquipment: org-not-found, validation, DB errors ──────────
+
+  describe("createEquipment edge cases", () => {
+    it("redirects when the user has no primary organization", async () => {
+      mocks.getCurrentUserContext.mockResolvedValue({ role: "admin", primaryOrganization: null });
+      await expect(
+        createEquipment(buildFormData({ type: "serialized", name: "Mesa" }))
+      ).rejects.toThrow("NEXT_REDIRECT:/dashboard?error=organization_not_found");
+    });
+
+    it("rejects invalid type/name", async () => {
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+      await expect(
+        createEquipment(buildFormData({ type: "weird", name: "Mesa" }))
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory?error=Dados inv");
+    });
+
+    it("redirects when the base equipment insert fails", async () => {
+      const equipInsertSingle = vi.fn().mockResolvedValue({
+        data: null,
+        error: { message: "insert boom" },
+      });
+      const equipInsertSelectFn = vi.fn().mockReturnValue({ single: equipInsertSingle });
+      const equipInsert = vi.fn().mockReturnValue({ select: equipInsertSelectFn });
+      mocks.createSupabaseAdminClient.mockReturnValue({
+        from: vi.fn(() => ({ insert: equipInsert })),
+      });
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+
+      await expect(
+        createEquipment(buildFormData({ type: "serialized", name: "Mesa" }))
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory?error=insert%20boom");
+    });
+
+    it("rolls back equipment and redirects when serialized unit insert fails", async () => {
+      const unitInsert = vi.fn().mockResolvedValue({ error: { message: "unit boom" } });
+      const deleteEqResult = vi.fn().mockResolvedValue({ error: null });
+      const deleteEqFn = vi.fn().mockReturnValue(deleteEqResult);
+      const deleteFn = vi.fn().mockReturnValue({ eq: deleteEqFn });
+      const equipUpdateResult = vi.fn().mockResolvedValue({ error: null });
+      const eqUpdateEq = vi.fn().mockReturnValue(equipUpdateResult);
+      const equipUpdate2 = vi.fn().mockReturnValue({ eq: eqUpdateEq });
+      const equipInsertSingle = vi.fn().mockResolvedValue({ data: { id: "eq-1" }, error: null });
+      const equipInsertSelectFn = vi.fn().mockReturnValue({ single: equipInsertSingle });
+      const equipInsert = vi.fn().mockReturnValue({ select: equipInsertSelectFn });
+
+      let calls = 0;
+      mocks.createSupabaseAdminClient.mockReturnValue({
+        from: vi.fn((table: string) => {
+          if (table === "equipment") {
+            calls++;
+            if (calls === 1) return { insert: equipInsert };
+            return { update: equipUpdate2, delete: deleteFn };
+          }
+          if (table === "equipment_units") return { insert: unitInsert };
+          return {};
+        }),
+      });
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+
+      await expect(
+        createEquipment(buildFormData({ type: "serialized", name: "Mesa" }))
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory?error=unit%20boom");
+
+      expect(deleteFn).toHaveBeenCalled();
+    });
+
+    it("uses a provided qrCode for the unit when given (serialized, no variants)", async () => {
+      const unitInsert = vi.fn().mockResolvedValue({ error: null });
+      const equipUpdateResult = vi.fn().mockResolvedValue({ error: null });
+      const eqUpdateEq = vi.fn().mockReturnValue(equipUpdateResult);
+      const equipUpdate2 = vi.fn().mockReturnValue({ eq: eqUpdateEq });
+      const equipInsertSingle = vi.fn().mockResolvedValue({ data: { id: "eq-1" }, error: null });
+      const equipInsertSelectFn = vi.fn().mockReturnValue({ single: equipInsertSingle });
+      const equipInsert = vi.fn().mockReturnValue({ select: equipInsertSelectFn });
+
+      let calls = 0;
+      mocks.createSupabaseAdminClient.mockReturnValue({
+        from: vi.fn((table: string) => {
+          if (table === "equipment") {
+            calls++;
+            if (calls === 1) return { insert: equipInsert };
+            return { update: equipUpdate2 };
+          }
+          if (table === "equipment_units") return { insert: unitInsert };
+          return {};
+        }),
+      });
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+
+      await expect(
+        createEquipment(
+          buildFormData({ type: "serialized", name: "Mesa", qrCode: "STICKER-99" })
+        )
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory?success=Equipamento cadastrado.");
+
+      expect(unitInsert).toHaveBeenCalledWith(
+        expect.objectContaining({ qr_code: "STICKER-99" })
+      );
+    });
+
+    it("rolls back equipment and redirects when bulk insert fails", async () => {
+      const bulkInsert = vi.fn().mockResolvedValue({ error: { message: "bulk boom" } });
+      const deleteEqResult = vi.fn().mockResolvedValue({ error: null });
+      const deleteEqFn = vi.fn().mockReturnValue(deleteEqResult);
+      const deleteFn = vi.fn().mockReturnValue({ eq: deleteEqFn });
+      const equipInsertSingle = vi.fn().mockResolvedValue({ data: { id: "eq-b" }, error: null });
+      const equipInsertSelectFn = vi.fn().mockReturnValue({ single: equipInsertSingle });
+      const equipInsert = vi.fn().mockReturnValue({ select: equipInsertSelectFn });
+
+      mocks.createSupabaseAdminClient.mockReturnValue({
+        from: vi.fn((table: string) => {
+          if (table === "equipment") return { insert: equipInsert, delete: deleteFn };
+          if (table === "bulk_inventory") return { insert: bulkInsert };
+          return {};
+        }),
+      });
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+
+      await expect(
+        createEquipment(buildFormData({ type: "bulk", name: "Cabo", totalQty: "10" }))
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory?error=bulk%20boom");
+
+      expect(deleteFn).toHaveBeenCalled();
+    });
+  });
+
+  // ── updateEquipmentUnitStatus success + DB error ───────────────────
+
+  describe("updateEquipmentUnitStatus", () => {
+    it("updates status and revalidates on success", async () => {
+      const updateResult = vi.fn().mockResolvedValue({ error: null });
+      const eqFn = vi.fn().mockReturnValue(updateResult);
+      const updateFn = vi.fn().mockReturnValue({ eq: eqFn });
+      mocks.createSupabaseAdminClient.mockReturnValue({
+        from: vi.fn(() => ({ update: updateFn })),
+      });
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+
+      await updateEquipmentUnitStatus(
+        buildFormData({ unitId: "u-1", status: "maintenance", equipmentId: "eq-1" })
+      );
+
+      expect(updateFn).toHaveBeenCalledWith({ status: "maintenance" });
+      expect(eqFn).toHaveBeenCalledWith("id", "u-1");
+      expect(mocks.revalidatePath).toHaveBeenCalledWith("/inventory/eq-1");
+      expect(mocks.revalidatePath).toHaveBeenCalledWith("/inventory");
+    });
+
+    it("redirects with the error message when the update fails", async () => {
+      const eqFn = vi.fn().mockResolvedValue({ error: { message: "boom" } });
+      const updateFn = vi.fn().mockReturnValue({ eq: eqFn });
+      mocks.createSupabaseAdminClient.mockReturnValue({
+        from: vi.fn(() => ({ update: updateFn })),
+      });
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+
+      await expect(
+        updateEquipmentUnitStatus(
+          buildFormData({ unitId: "u-1", status: "available", equipmentId: "eq-1" })
+        )
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory/eq-1?error=boom");
+    });
+  });
+
+  // ── setUnitQrCode extra branches ───────────────────────────────────
+
+  describe("setUnitQrCode extra branches", () => {
+    it("rejects empty unitId", async () => {
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+      const result = await setUnitQrCode("   ", "QR");
+      expect(result.ok).toBe(false);
+      expect(result.error).toMatch(/inválida/i);
+    });
+
+    it("returns the generic error message for non-23505 update errors", async () => {
+      const maybeSingle = vi.fn().mockResolvedValue({
+        data: null,
+        error: { code: "other", message: "weird db error" },
+      });
+      const selectFn = vi.fn().mockReturnValue({ maybeSingle });
+      const eqFn = vi.fn().mockReturnValue({ select: selectFn });
+      const updateFn = vi.fn().mockReturnValue({ eq: eqFn });
+      mocks.createSupabaseAdminClient.mockReturnValue({
+        from: vi.fn(() => ({ update: updateFn })),
+      });
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+
+      const result = await setUnitQrCode("u1", "QR");
+      expect(result.ok).toBe(false);
+      expect(result.error).toBe("weird db error");
+    });
+
+    it("returns not-found when the update matches no unit", async () => {
+      const maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
+      const selectFn = vi.fn().mockReturnValue({ maybeSingle });
+      const eqFn = vi.fn().mockReturnValue({ select: selectFn });
+      const updateFn = vi.fn().mockReturnValue({ eq: eqFn });
+      mocks.createSupabaseAdminClient.mockReturnValue({
+        from: vi.fn(() => ({ update: updateFn })),
+      });
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+
+      const result = await setUnitQrCode("u1", "QR");
+      expect(result.ok).toBe(false);
+      expect(result.error).toMatch(/não encontrada/i);
+    });
+  });
+
+  // ── deactivateEquipment validation + DB error ──────────────────────
+
+  describe("deactivateEquipment edge cases", () => {
+    it("rejects when id is missing", async () => {
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+      await expect(
+        deactivateEquipment(buildFormData({ id: "" }))
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory?error=Equipamento inválido.");
+    });
+
+    it("redirects with the error message when the update fails", async () => {
+      const eqFn = vi.fn().mockResolvedValue({ error: { message: "boom" } });
+      const updateFn = vi.fn().mockReturnValue({ eq: eqFn });
+      mocks.createSupabaseAdminClient.mockReturnValue({
+        from: vi.fn(() => ({ update: updateFn })),
+      });
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+
+      await expect(
+        deactivateEquipment(buildFormData({ id: "eq-1" }))
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory?error=boom");
+    });
+  });
+
+  // ── deleteEquipment (full coverage) ────────────────────────────────
+
+  describe("deleteEquipment", () => {
+    function buildEquipFetch(data: unknown, error: unknown = null) {
+      const maybeSingle = vi.fn().mockResolvedValue({ data, error });
+      const eq2 = vi.fn().mockReturnValue({ maybeSingle });
+      const eq1 = vi.fn().mockReturnValue({ eq: eq2 });
+      const select = vi.fn().mockReturnValue({ eq: eq1 });
+      return select;
+    }
+
+    it("blocks non-admin roles (warehouse) via requireDeleteRole", async () => {
+      mocks.getCurrentUserContext.mockResolvedValue({ role: "warehouse", primaryOrganization: { id: "org-1" } });
+      await expect(
+        deleteEquipment(buildFormData({ id: "eq-1" }))
+      ).rejects.toThrow("NEXT_REDIRECT:/dashboard?error=unauthorized");
+    });
+
+    it("blocks unauthenticated users via requireDeleteRole", async () => {
+      mocks.getCurrentUserContext.mockResolvedValue(null);
+      await expect(
+        deleteEquipment(buildFormData({ id: "eq-1" }))
+      ).rejects.toThrow("NEXT_REDIRECT:/dashboard?error=unauthorized");
+    });
+
+    it("rejects when id is missing", async () => {
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+      await expect(
+        deleteEquipment(buildFormData({ id: "" }))
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory?error=Equipamento inválido.");
+    });
+
+    it("redirects when the ownership fetch errors", async () => {
+      mocks.createSupabaseAdminClient.mockReturnValue({
+        from: vi.fn(() => ({ select: buildEquipFetch(null, { message: "fetch boom" }) })),
+      });
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+      await expect(
+        deleteEquipment(buildFormData({ id: "eq-1" }))
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory?error=fetch%20boom");
+    });
+
+    it("redirects when the equipment is not found in the org", async () => {
+      mocks.createSupabaseAdminClient.mockReturnValue({
+        from: vi.fn(() => ({ select: buildEquipFetch(null) })),
+      });
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+      await expect(
+        deleteEquipment(buildFormData({ id: "eq-1" }))
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory?error=Equipamento n");
+    });
+
+    it("blocks deletion when the equipment is allocated to an active OS", async () => {
+      mocks.createSupabaseAdminClient.mockReturnValue({
+        from: vi.fn(() => ({ select: buildEquipFetch({ id: "eq-1" }) })),
+      });
+      mocks.getEquipmentAllocations.mockResolvedValue([{ id: "alloc-1" }]);
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+      await expect(
+        deleteEquipment(buildFormData({ id: "eq-1" }))
+      ).rejects.toThrow(/alocado%20em%20OS/);
+    });
+
+    it("redirects when the delete fails", async () => {
+      const deleteEq2 = vi.fn().mockResolvedValue({ error: { message: "del boom" } });
+      const deleteEq1 = vi.fn().mockReturnValue({ eq: deleteEq2 });
+      const deleteFn = vi.fn().mockReturnValue({ eq: deleteEq1 });
+      mocks.createSupabaseAdminClient.mockReturnValue({
+        from: vi.fn(() => ({ select: buildEquipFetch({ id: "eq-1" }), delete: deleteFn })),
+      });
+      mocks.getEquipmentAllocations.mockResolvedValue([]);
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+      await expect(
+        deleteEquipment(buildFormData({ id: "eq-1" }))
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory?error=del%20boom");
+    });
+
+    it("deletes successfully when not allocated", async () => {
+      const deleteEq2 = vi.fn().mockResolvedValue({ error: null });
+      const deleteEq1 = vi.fn().mockReturnValue({ eq: deleteEq2 });
+      const deleteFn = vi.fn().mockReturnValue({ eq: deleteEq1 });
+      mocks.createSupabaseAdminClient.mockReturnValue({
+        from: vi.fn(() => ({ select: buildEquipFetch({ id: "eq-1" }), delete: deleteFn })),
+      });
+      mocks.getEquipmentAllocations.mockResolvedValue([]);
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+      await expect(
+        deleteEquipment(buildFormData({ id: "eq-1" }))
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory?success=Equipamento apagado.");
+      expect(mocks.revalidatePath).toHaveBeenCalledWith("/inventory");
+    });
+  });
+
+  // ── updateEquipment DB error ───────────────────────────────────────
+
+  it("updateEquipment redirects with the error message when the update fails", async () => {
+    const eqFn = vi.fn().mockResolvedValue({ error: { message: "upd boom" } });
+    const updateFn = vi.fn().mockReturnValue({ eq: eqFn });
+    mocks.createSupabaseAdminClient.mockReturnValue({
+      from: vi.fn(() => ({ update: updateFn })),
+    });
+    mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+    await expect(
+      updateEquipment(buildFormData({ equipmentId: "eq-1", name: "X" }))
+    ).rejects.toThrow("NEXT_REDIRECT:/inventory/eq-1?error=upd%20boom");
+  });
+
+  // ── addEquipmentUnit insert error ──────────────────────────────────
+
+  it("addEquipmentUnit redirects when the units insert fails", async () => {
+    const insertSelect = vi.fn().mockResolvedValue({ data: null, error: { message: "ins boom" } });
+    const insertFn = vi.fn().mockReturnValue({ select: insertSelect });
+    mocks.createSupabaseAdminClient.mockReturnValue({
+      from: vi.fn(() => ({ insert: insertFn })),
+    });
+    mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+    await expect(
+      addEquipmentUnit(buildFormData({ equipmentId: "eq-1" }))
+    ).rejects.toThrow("NEXT_REDIRECT:/inventory/eq-1?error=ins%20boom");
+  });
+
+  // ── deleteEquipmentUnit: not found + delete error ──────────────────
+
+  describe("deleteEquipmentUnit edge cases", () => {
+    it("redirects when the unit is not found", async () => {
+      const fetchSingle = vi.fn().mockResolvedValue({ data: null, error: { message: "nope" } });
+      const fetchEq = vi.fn().mockReturnValue({ single: fetchSingle });
+      const fetchSelect = vi.fn().mockReturnValue({ eq: fetchEq });
+      mocks.createSupabaseAdminClient.mockReturnValue({
+        from: vi.fn(() => ({ select: fetchSelect })),
+      });
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+      await expect(
+        deleteEquipmentUnit(buildFormData({ unitId: "u-1" }))
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory?error=Unidade não encontrada.");
+    });
+
+    it("redirects with the error message when the delete fails", async () => {
+      const fetchSingle = vi.fn().mockResolvedValue({ data: { equipment_id: "eq-1" }, error: null });
+      const fetchEq = vi.fn().mockReturnValue({ single: fetchSingle });
+      const fetchSelect = vi.fn().mockReturnValue({ eq: fetchEq });
+      const deleteEqFn = vi.fn().mockResolvedValue({ error: { message: "del boom" } });
+      const deleteFn = vi.fn().mockReturnValue({ eq: deleteEqFn });
+      mocks.createSupabaseAdminClient.mockReturnValue({
+        from: vi.fn(() => ({ select: fetchSelect, delete: deleteFn })),
+      });
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+      await expect(
+        deleteEquipmentUnit(buildFormData({ unitId: "u-1" }))
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory/eq-1?error=del%20boom");
+    });
+  });
+
+  // ── updateBulkInventory DB error ───────────────────────────────────
+
+  it("updateBulkInventory redirects when the update fails", async () => {
+    const isFn = vi.fn().mockResolvedValue({ error: { message: "bulk boom" } });
+    const eqFn = vi.fn().mockReturnValue({ is: isFn });
+    const updateFn = vi.fn().mockReturnValue({ eq: eqFn });
+    mocks.createSupabaseAdminClient.mockReturnValue({
+      from: vi.fn(() => ({ update: updateFn })),
+    });
+    mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+    await expect(
+      updateBulkInventory(buildFormData({ equipmentId: "eq-1", totalQty: "10", availableQty: "5" }))
+    ).rejects.toThrow("NEXT_REDIRECT:/inventory/eq-1?error=bulk%20boom");
+  });
+
+  // ── createCategory: org-not-found + DB error ───────────────────────
+
+  describe("createCategory edge cases", () => {
+    it("redirects when the user has no primary organization", async () => {
+      mocks.getCurrentUserContext.mockResolvedValue({ role: "admin", primaryOrganization: null });
+      await expect(
+        createCategory(buildFormData({ name: "Áudio" }))
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory/categories?error=Organiza");
+    });
+
+    it("redirects with the error message when the insert fails", async () => {
+      const insertFn = vi.fn().mockResolvedValue({ error: { message: "cat boom" } });
+      mocks.createSupabaseAdminClient.mockReturnValue({
+        from: vi.fn(() => ({ insert: insertFn })),
+      });
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+      await expect(
+        createCategory(buildFormData({ name: "Áudio" }))
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory/categories?error=cat%20boom");
+    });
+
+    it("rejects when the parent category belongs to another org", async () => {
+      const maybeSingle = vi.fn().mockResolvedValue({
+        data: { id: "p", organization_id: "other-org", parent_category_id: null },
+        error: null,
+      });
+      const eqFn = vi.fn().mockReturnValue({ maybeSingle });
+      const selectFn = vi.fn().mockReturnValue({ eq: eqFn });
+      mocks.createSupabaseAdminClient.mockReturnValue({
+        from: vi.fn(() => ({ select: selectFn })),
+      });
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+      await expect(
+        createCategory(buildFormData({ name: "Sub", parentCategoryId: "p" }))
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory/categories?error=Categoria pai inválida.");
+    });
+  });
+
+  // ── renameCategory: org-not-found, validation, child-block, errors ─
+
+  describe("renameCategory edge cases", () => {
+    it("redirects when the user has no primary organization", async () => {
+      mocks.getCurrentUserContext.mockResolvedValue({ role: "admin", primaryOrganization: null });
+      await expect(
+        renameCategory(buildFormData({ categoryId: "c-1", name: "X" }))
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory/categories?error=Organiza");
+    });
+
+    it("rejects when categoryId or name is missing", async () => {
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+      await expect(
+        renameCategory(buildFormData({ categoryId: "", name: "X" }))
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory/categories?error=Dados inválidos.");
+    });
+
+    it("rejects making a category its own parent", async () => {
+      mocks.createSupabaseAdminClient.mockReturnValue({ from: vi.fn(() => ({})) });
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+      await expect(
+        renameCategory(
+          buildFormData({ categoryId: "c-1", name: "X", parentCategoryId: "c-1" })
+        )
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory/categories?error=Categoria não pode ser pai dela mesma.");
+    });
+
+    it("rejects making a category with children a sub-category", async () => {
+      const parentMaybeSingle = vi.fn().mockResolvedValue({
+        data: { id: "parent", organization_id: "org-1", parent_category_id: null },
+        error: null,
+      });
+      const parentEq = vi.fn().mockReturnValue({ maybeSingle: parentMaybeSingle });
+      const parentSelect = vi.fn().mockReturnValue({ eq: parentEq });
+      // count query for children
+      const countEq = vi.fn().mockResolvedValue({ count: 2, error: null });
+      const countSelect = vi.fn().mockReturnValue({ eq: countEq });
+
+      let selectCalls = 0;
+      mocks.createSupabaseAdminClient.mockReturnValue({
+        from: vi.fn(() => ({
+          select: vi.fn((...args: unknown[]) => {
+            selectCalls++;
+            return selectCalls === 1 ? parentSelect(...args) : countSelect(...args);
+          }),
+        })),
+      });
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+
+      await expect(
+        renameCategory(
+          buildFormData({ categoryId: "c-1", name: "X", parentCategoryId: "parent" })
+        )
+      ).rejects.toThrow(/sub-categorias/);
+    });
+
+    it("redirects when the children count query errors", async () => {
+      const parentMaybeSingle = vi.fn().mockResolvedValue({
+        data: { id: "parent", organization_id: "org-1", parent_category_id: null },
+        error: null,
+      });
+      const parentEq = vi.fn().mockReturnValue({ maybeSingle: parentMaybeSingle });
+      const parentSelect = vi.fn().mockReturnValue({ eq: parentEq });
+      const countEq = vi.fn().mockResolvedValue({ count: null, error: { message: "count boom" } });
+      const countSelect = vi.fn().mockReturnValue({ eq: countEq });
+
+      let selectCalls = 0;
+      mocks.createSupabaseAdminClient.mockReturnValue({
+        from: vi.fn(() => ({
+          select: vi.fn((...args: unknown[]) => {
+            selectCalls++;
+            return selectCalls === 1 ? parentSelect(...args) : countSelect(...args);
+          }),
+        })),
+      });
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+
+      await expect(
+        renameCategory(
+          buildFormData({ categoryId: "c-1", name: "X", parentCategoryId: "parent" })
+        )
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory/categories?error=count%20boom");
+    });
+
+    it("clears parent (empty string) and updates parent_category_id to null", async () => {
+      const updateResult = vi.fn().mockResolvedValue({ error: null });
+      const eqFn = vi.fn().mockReturnValue(updateResult);
+      const updateFn = vi.fn().mockReturnValue({ eq: eqFn });
+      mocks.createSupabaseAdminClient.mockReturnValue({
+        from: vi.fn(() => ({ update: updateFn })),
+      });
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+
+      await expect(
+        renameCategory(buildFormData({ categoryId: "c-1", name: "X", parentCategoryId: "" }))
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory/categories?success=Categoria atualizada.");
+
+      expect(updateFn).toHaveBeenCalledWith({ name: "X", parent_category_id: null });
+    });
+
+    it("redirects with the error message when the update fails", async () => {
+      const eqFn = vi.fn().mockResolvedValue({ error: { message: "ren boom" } });
+      const updateFn = vi.fn().mockReturnValue({ eq: eqFn });
+      mocks.createSupabaseAdminClient.mockReturnValue({
+        from: vi.fn(() => ({ update: updateFn })),
+      });
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+      await expect(
+        renameCategory(buildFormData({ categoryId: "c-1", name: "X" }))
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory/categories?error=ren%20boom");
+    });
+  });
+
+  // ── deleteCategory edge cases ──────────────────────────────────────
+
+  describe("deleteCategory edge cases", () => {
+    it("rejects when categoryId is missing", async () => {
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+      await expect(
+        deleteCategory(buildFormData({ categoryId: "" }))
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory/categories?error=Categoria inválida.");
+    });
+
+    it("redirects when the count query errors", async () => {
+      mocks.createSupabaseAdminClient.mockReturnValue({
+        from: vi.fn(() => ({
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockResolvedValue({ count: null, error: { message: "count boom" } }),
+          }),
+        })),
+      });
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+      await expect(
+        deleteCategory(buildFormData({ categoryId: "c-1" }))
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory/categories?error=count%20boom");
+    });
+
+    it("redirects with the error message when the delete fails", async () => {
+      const deleteEqFn = vi.fn().mockResolvedValue({ error: { message: "del boom" } });
+      const deleteFn = vi.fn().mockReturnValue({ eq: deleteEqFn });
+      mocks.createSupabaseAdminClient.mockReturnValue({
+        from: vi.fn((table: string) => {
+          if (table === "equipment") {
+            return { select: vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ count: 0, error: null }) }) };
+          }
+          return { delete: deleteFn };
+        }),
+      });
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+      await expect(
+        deleteCategory(buildFormData({ categoryId: "c-1" }))
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory/categories?error=del%20boom");
+    });
+  });
+
+  // ── createEquipmentVariant edge cases ──────────────────────────────
+
+  describe("createEquipmentVariant edge cases", () => {
+    function buildEquipMeta(data: unknown, error: unknown = null) {
+      const maybeSingle = vi.fn().mockResolvedValue({ data, error });
+      const eqFn = vi.fn().mockReturnValue({ maybeSingle });
+      return vi.fn().mockReturnValue({ eq: eqFn });
+    }
+
+    it("redirects when the user has no primary organization", async () => {
+      mocks.getCurrentUserContext.mockResolvedValue({ role: "admin", primaryOrganization: null });
+      await expect(
+        createEquipmentVariant(buildFormData({ equipmentId: "eq-1", label: "L" }))
+      ).rejects.toThrow("NEXT_REDIRECT:/dashboard?error=organization_not_found");
+    });
+
+    it("rejects when the equipment is not in the org", async () => {
+      mocks.createSupabaseAdminClient.mockReturnValue({
+        from: vi.fn(() => ({ select: buildEquipMeta(null) })),
+      });
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+      await expect(
+        createEquipmentVariant(buildFormData({ equipmentId: "eq-1", label: "L" }))
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory/eq-1?error=Equipamento inválido.");
+    });
+
+    it("creates a serialized variant without touching bulk/has_variants when already set", async () => {
+      const variantInsertSingle = vi.fn().mockResolvedValue({ data: { id: "v-9" }, error: null });
+      const variantInsertSelect = vi.fn().mockReturnValue({ single: variantInsertSingle });
+      const variantInsert = vi.fn().mockReturnValue({ select: variantInsertSelect });
+      const bulkInsert = vi.fn().mockResolvedValue({ error: null });
+      const equipUpdate = vi.fn();
+      mocks.createSupabaseAdminClient.mockReturnValue({
+        from: vi.fn((table: string) => {
+          if (table === "equipment")
+            return {
+              select: buildEquipMeta({ id: "eq-1", organization_id: "org-1", type: "serialized", has_variants: true }),
+              update: equipUpdate,
+            };
+          if (table === "equipment_variants") return { insert: variantInsert };
+          if (table === "bulk_inventory") return { insert: bulkInsert };
+          return {};
+        }),
+      });
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+      await expect(
+        createEquipmentVariant(buildFormData({ equipmentId: "eq-1", label: "P", totalQty: "10" }))
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory/eq-1?success=Variante criada.");
+      // serialized → bulk insert skipped even with totalQty; has_variants already true → no update
+      expect(bulkInsert).not.toHaveBeenCalled();
+      expect(equipUpdate).not.toHaveBeenCalled();
+    });
+
+    it("returns a friendly message on duplicate variant (23505)", async () => {
+      const variantInsertSingle = vi.fn().mockResolvedValue({
+        data: null,
+        error: { code: "23505", message: "dup" },
+      });
+      const variantInsertSelect = vi.fn().mockReturnValue({ single: variantInsertSingle });
+      const variantInsert = vi.fn().mockReturnValue({ select: variantInsertSelect });
+      mocks.createSupabaseAdminClient.mockReturnValue({
+        from: vi.fn((table: string) => {
+          if (table === "equipment")
+            return { select: buildEquipMeta({ id: "eq-1", organization_id: "org-1", type: "serialized", has_variants: true }) };
+          if (table === "equipment_variants") return { insert: variantInsert };
+          return {};
+        }),
+      });
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+      await expect(
+        createEquipmentVariant(buildFormData({ equipmentId: "eq-1", label: "5M" }))
+      ).rejects.toThrow(/existe%20uma%20variante/);
+    });
+
+    it("redirects with the generic error message on non-23505 insert error", async () => {
+      const variantInsertSingle = vi.fn().mockResolvedValue({
+        data: null,
+        error: { code: "other", message: "var boom" },
+      });
+      const variantInsertSelect = vi.fn().mockReturnValue({ single: variantInsertSingle });
+      const variantInsert = vi.fn().mockReturnValue({ select: variantInsertSelect });
+      mocks.createSupabaseAdminClient.mockReturnValue({
+        from: vi.fn((table: string) => {
+          if (table === "equipment")
+            return { select: buildEquipMeta({ id: "eq-1", organization_id: "org-1", type: "serialized", has_variants: true }) };
+          if (table === "equipment_variants") return { insert: variantInsert };
+          return {};
+        }),
+      });
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+      await expect(
+        createEquipmentVariant(buildFormData({ equipmentId: "eq-1", label: "5M" }))
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory/eq-1?error=var%20boom");
+    });
+
+    it("rolls back the variant when the bulk_inventory insert fails", async () => {
+      const variantInsertSingle = vi.fn().mockResolvedValue({ data: { id: "v-1" }, error: null });
+      const variantInsertSelect = vi.fn().mockReturnValue({ single: variantInsertSingle });
+      const variantInsert = vi.fn().mockReturnValue({ select: variantInsertSelect });
+      const variantDeleteEq = vi.fn().mockResolvedValue({ error: null });
+      const variantDelete = vi.fn().mockReturnValue({ eq: variantDeleteEq });
+      const bulkInsert = vi.fn().mockResolvedValue({ error: { message: "bulk boom" } });
+
+      mocks.createSupabaseAdminClient.mockReturnValue({
+        from: vi.fn((table: string) => {
+          if (table === "equipment")
+            return { select: buildEquipMeta({ id: "eq-1", organization_id: "org-1", type: "bulk", has_variants: true }) };
+          if (table === "equipment_variants") return { insert: variantInsert, delete: variantDelete };
+          if (table === "bulk_inventory") return { insert: bulkInsert };
+          return {};
+        }),
+      });
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+      await expect(
+        createEquipmentVariant(buildFormData({ equipmentId: "eq-1", label: "5M", totalQty: "10" }))
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory/eq-1?error=bulk%20boom");
+      expect(variantDelete).toHaveBeenCalled();
+    });
+  });
+
+  // ── updateEquipmentVariant edge cases ──────────────────────────────
+
+  describe("updateEquipmentVariant edge cases", () => {
+    function buildVariantFetch(data: unknown, error: unknown = null) {
+      const maybeSingle = vi.fn().mockResolvedValue({ data, error });
+      const eqFn = vi.fn().mockReturnValue({ maybeSingle });
+      return vi.fn().mockReturnValue({ eq: eqFn });
+    }
+
+    it("redirects when the user has no primary organization", async () => {
+      mocks.getCurrentUserContext.mockResolvedValue({ role: "admin", primaryOrganization: null });
+      await expect(
+        updateEquipmentVariant(buildFormData({ variantId: "v-1", label: "L" }))
+      ).rejects.toThrow("NEXT_REDIRECT:/dashboard?error=organization_not_found");
+    });
+
+    it("rejects when variantId is missing", async () => {
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+      await expect(
+        updateEquipmentVariant(buildFormData({ variantId: "", label: "L" }))
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory?error=Variante inválida.");
+    });
+
+    it("rejects when label is empty", async () => {
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+      await expect(
+        updateEquipmentVariant(buildFormData({ variantId: "v-1", label: "  " }))
+      ).rejects.toThrow(/Label%20da%20variante/);
+    });
+
+    it("redirects when the variant is not found", async () => {
+      mocks.createSupabaseAdminClient.mockReturnValue({
+        from: vi.fn(() => ({ select: buildVariantFetch(null) })),
+      });
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+      await expect(
+        updateEquipmentVariant(buildFormData({ variantId: "v-1", label: "L" }))
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory?error=Variante não encontrada.");
+    });
+
+    it("rejects when the variant belongs to another org", async () => {
+      mocks.createSupabaseAdminClient.mockReturnValue({
+        from: vi.fn(() => ({
+          select: buildVariantFetch({
+            id: "v-1",
+            equipment_id: "eq-1",
+            equipment: { organization_id: "other-org" },
+          }),
+        })),
+      });
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+      await expect(
+        updateEquipmentVariant(buildFormData({ variantId: "v-1", label: "L" }))
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory?error=Variante inválida.");
+    });
+
+    it("returns a friendly message on duplicate (23505)", async () => {
+      const variantUpdateEq = vi.fn().mockResolvedValue({ error: { code: "23505", message: "dup" } });
+      const variantUpdate = vi.fn().mockReturnValue({ eq: variantUpdateEq });
+      mocks.createSupabaseAdminClient.mockReturnValue({
+        from: vi.fn(() => ({
+          select: buildVariantFetch({
+            id: "v-1",
+            equipment_id: "eq-1",
+            equipment: { organization_id: "org-1" },
+          }),
+          update: variantUpdate,
+        })),
+      });
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+      await expect(
+        updateEquipmentVariant(buildFormData({ variantId: "v-1", label: "10M" }))
+      ).rejects.toThrow(/existe%20uma%20variante/);
+    });
+
+    it("redirects with the generic error message on non-23505 update error", async () => {
+      const variantUpdateEq = vi.fn().mockResolvedValue({ error: { code: "x", message: "upd boom" } });
+      const variantUpdate = vi.fn().mockReturnValue({ eq: variantUpdateEq });
+      mocks.createSupabaseAdminClient.mockReturnValue({
+        from: vi.fn(() => ({
+          select: buildVariantFetch({
+            id: "v-1",
+            equipment_id: "eq-1",
+            equipment: { organization_id: "org-1" },
+          }),
+          update: variantUpdate,
+        })),
+      });
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+      await expect(
+        updateEquipmentVariant(buildFormData({ variantId: "v-1", label: "10M" }))
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory/eq-1?error=upd%20boom");
+    });
+  });
+
+  // ── deleteEquipmentVariant edge cases ──────────────────────────────
+
+  describe("deleteEquipmentVariant edge cases", () => {
+    function buildVariantFetch(data: unknown, error: unknown = null) {
+      const maybeSingle = vi.fn().mockResolvedValue({ data, error });
+      const eqFn = vi.fn().mockReturnValue({ maybeSingle });
+      return vi.fn().mockReturnValue({ eq: eqFn });
+    }
+    const validVariant = {
+      id: "v-1",
+      equipment_id: "eq-1",
+      equipment: { organization_id: "org-1" },
+    };
+
+    it("redirects when the user has no primary organization", async () => {
+      mocks.getCurrentUserContext.mockResolvedValue({ role: "admin", primaryOrganization: null });
+      await expect(
+        deleteEquipmentVariant(buildFormData({ variantId: "v-1" }))
+      ).rejects.toThrow("NEXT_REDIRECT:/dashboard?error=organization_not_found");
+    });
+
+    it("rejects when variantId is missing", async () => {
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+      await expect(
+        deleteEquipmentVariant(buildFormData({ variantId: "" }))
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory?error=Variante inválida.");
+    });
+
+    it("redirects when the variant is not found", async () => {
+      mocks.createSupabaseAdminClient.mockReturnValue({
+        from: vi.fn(() => ({ select: buildVariantFetch(null) })),
+      });
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+      await expect(
+        deleteEquipmentVariant(buildFormData({ variantId: "v-1" }))
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory?error=Variante não encontrada.");
+    });
+
+    it("rejects when the variant belongs to another org", async () => {
+      mocks.createSupabaseAdminClient.mockReturnValue({
+        from: vi.fn(() => ({
+          select: buildVariantFetch({ ...validVariant, equipment: { organization_id: "other" } }),
+        })),
+      });
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+      await expect(
+        deleteEquipmentVariant(buildFormData({ variantId: "v-1" }))
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory?error=Variante inválida.");
+    });
+
+    it("redirects when the usage count query errors", async () => {
+      const usageEq = vi.fn().mockResolvedValue({ count: null, error: { message: "use boom" } });
+      const usageSelect = vi.fn().mockReturnValue({ eq: usageEq });
+      mocks.createSupabaseAdminClient.mockReturnValue({
+        from: vi.fn((table: string) => {
+          if (table === "equipment_variants") return { select: buildVariantFetch(validVariant) };
+          if (table === "event_equipment") return { select: usageSelect };
+          return {};
+        }),
+      });
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+      await expect(
+        deleteEquipmentVariant(buildFormData({ variantId: "v-1" }))
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory/eq-1?error=use%20boom");
+    });
+
+    it("deletes successfully when not in use", async () => {
+      const usageEq = vi.fn().mockResolvedValue({ count: 0, error: null });
+      const usageSelect = vi.fn().mockReturnValue({ eq: usageEq });
+      const deleteResult = vi.fn().mockResolvedValue({ error: null });
+      const deleteEqFn = vi.fn().mockReturnValue(deleteResult);
+      const deleteFn = vi.fn().mockReturnValue({ eq: deleteEqFn });
+      mocks.createSupabaseAdminClient.mockReturnValue({
+        from: vi.fn((table: string) => {
+          if (table === "equipment_variants") return { select: buildVariantFetch(validVariant), delete: deleteFn };
+          if (table === "event_equipment") return { select: usageSelect };
+          return {};
+        }),
+      });
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+      await expect(
+        deleteEquipmentVariant(buildFormData({ variantId: "v-1" }))
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory/eq-1?success=Variante removida.");
+      expect(deleteFn).toHaveBeenCalled();
+    });
+
+    it("redirects with the error message when the delete fails", async () => {
+      const usageEq = vi.fn().mockResolvedValue({ count: 0, error: null });
+      const usageSelect = vi.fn().mockReturnValue({ eq: usageEq });
+      const deleteEqFn = vi.fn().mockResolvedValue({ error: { message: "del boom" } });
+      const deleteFn = vi.fn().mockReturnValue({ eq: deleteEqFn });
+      mocks.createSupabaseAdminClient.mockReturnValue({
+        from: vi.fn((table: string) => {
+          if (table === "equipment_variants") return { select: buildVariantFetch(validVariant), delete: deleteFn };
+          if (table === "event_equipment") return { select: usageSelect };
+          return {};
+        }),
+      });
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+      await expect(
+        deleteEquipmentVariant(buildFormData({ variantId: "v-1" }))
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory/eq-1?error=del%20boom");
+    });
+  });
+
+  // ── updateBulkInventoryVariant edge cases ──────────────────────────
+
+  describe("updateBulkInventoryVariant edge cases", () => {
+    it("redirects when the user has no primary organization", async () => {
+      mocks.getCurrentUserContext.mockResolvedValue({ role: "admin", primaryOrganization: null });
+      await expect(
+        updateBulkInventoryVariant(
+          buildFormData({ equipmentId: "eq-1", variantId: "v-1", totalQty: "5", availableQty: "5" })
+        )
+      ).rejects.toThrow("NEXT_REDIRECT:/dashboard?error=organization_not_found");
+    });
+
+    it("rejects invalid quantities", async () => {
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+      await expect(
+        updateBulkInventoryVariant(
+          buildFormData({ equipmentId: "eq-1", variantId: "v-1", totalQty: "5", availableQty: "9" })
+        )
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory/eq-1?error=Quantidades inválidas.");
+    });
+
+    function buildEquipMeta() {
+      const maybeSingle = vi.fn().mockResolvedValue({
+        data: { id: "eq-1", organization_id: "org-1", type: "bulk", has_variants: true },
+        error: null,
+      });
+      const eqFn = vi.fn().mockReturnValue({ maybeSingle });
+      return vi.fn().mockReturnValue({ eq: eqFn });
+    }
+
+    it("redirects with the error message when the existing-row update fails", async () => {
+      const existingMaybeSingle = vi.fn().mockResolvedValue({ data: { id: "b-1" }, error: null });
+      const existingEq2 = vi.fn().mockReturnValue({ maybeSingle: existingMaybeSingle });
+      const existingEq1 = vi.fn().mockReturnValue({ eq: existingEq2 });
+      const existingSelect = vi.fn().mockReturnValue({ eq: existingEq1 });
+      const updateEq = vi.fn().mockResolvedValue({ error: { message: "upd boom" } });
+      const updateFn = vi.fn().mockReturnValue({ eq: updateEq });
+      mocks.createSupabaseAdminClient.mockReturnValue({
+        from: vi.fn((table: string) => {
+          if (table === "equipment") return { select: buildEquipMeta() };
+          if (table === "bulk_inventory") return { select: existingSelect, update: updateFn };
+          return {};
+        }),
+      });
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+      await expect(
+        updateBulkInventoryVariant(
+          buildFormData({ equipmentId: "eq-1", variantId: "v-1", totalQty: "5", availableQty: "5" })
+        )
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory/eq-1?error=upd%20boom");
+    });
+
+    it("redirects with the error message when the insert fails", async () => {
+      const existingMaybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
+      const existingEq2 = vi.fn().mockReturnValue({ maybeSingle: existingMaybeSingle });
+      const existingEq1 = vi.fn().mockReturnValue({ eq: existingEq2 });
+      const existingSelect = vi.fn().mockReturnValue({ eq: existingEq1 });
+      const insertFn = vi.fn().mockResolvedValue({ error: { message: "ins boom" } });
+      mocks.createSupabaseAdminClient.mockReturnValue({
+        from: vi.fn((table: string) => {
+          if (table === "equipment") return { select: buildEquipMeta() };
+          if (table === "bulk_inventory") return { select: existingSelect, insert: insertFn };
+          return {};
+        }),
+      });
+      mocks.getCurrentUserContext.mockResolvedValue(ADMIN_CONTEXT);
+      await expect(
+        updateBulkInventoryVariant(
+          buildFormData({ equipmentId: "eq-1", variantId: "v-1", totalQty: "5", availableQty: "5" })
+        )
+      ).rejects.toThrow("NEXT_REDIRECT:/inventory/eq-1?error=ins%20boom");
     });
   });
 });

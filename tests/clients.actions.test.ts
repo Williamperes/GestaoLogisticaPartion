@@ -142,4 +142,208 @@ describe("client actions", () => {
       "NEXT_REDIRECT:/clients?error=Cliente inválido."
     );
   });
+
+  // ── createClient: validation, fallback, error ──────────────────────
+
+  it("rejects createClient when name is empty", async () => {
+    mocks.getCurrentUserContext.mockResolvedValue({ role: "admin" });
+
+    await expect(createClient(buildFormData({ name: "   " }))).rejects.toThrow(
+      "NEXT_REDIRECT:/clients?error=Informe o nome do cliente."
+    );
+  });
+
+  it("falls back to minimal insert when columns are missing (42703)", async () => {
+    const insert = vi
+      .fn()
+      .mockResolvedValueOnce({ error: { code: "42703", message: "no column" } })
+      .mockResolvedValueOnce({ error: null });
+
+    mocks.getCurrentUserContext.mockResolvedValue({ role: "admin" });
+    mocks.resolveUniqueOrganizationSlug.mockResolvedValue("acme");
+    mocks.createSupabaseAdminClient.mockReturnValue({
+      from: vi.fn().mockReturnValue({ insert }),
+    });
+
+    await expect(
+      createClient(buildFormData({ name: "Acme", contactName: "Maria" }))
+    ).rejects.toThrow("NEXT_REDIRECT:/clients?success=Cliente cadastrado.");
+
+    expect(insert).toHaveBeenCalledTimes(2);
+    expect(insert).toHaveBeenLastCalledWith({
+      name: "Acme",
+      slug: "acme",
+      type: "client",
+    });
+  });
+
+  it("redirects when 42703 fallback insert also fails", async () => {
+    const insert = vi
+      .fn()
+      .mockResolvedValueOnce({ error: { code: "42703", message: "no column" } })
+      .mockResolvedValueOnce({ error: { message: "fallback boom" } });
+
+    mocks.getCurrentUserContext.mockResolvedValue({ role: "admin" });
+    mocks.resolveUniqueOrganizationSlug.mockResolvedValue("acme");
+    mocks.createSupabaseAdminClient.mockReturnValue({
+      from: vi.fn().mockReturnValue({ insert }),
+    });
+
+    await expect(createClient(buildFormData({ name: "Acme" }))).rejects.toThrow(
+      "NEXT_REDIRECT:/clients?error=fallback%20boom"
+    );
+  });
+
+  it("redirects when createClient insert fails with a generic error", async () => {
+    const insert = vi.fn().mockResolvedValue({ error: { message: "db down" } });
+
+    mocks.getCurrentUserContext.mockResolvedValue({ role: "admin" });
+    mocks.resolveUniqueOrganizationSlug.mockResolvedValue("acme");
+    mocks.createSupabaseAdminClient.mockReturnValue({
+      from: vi.fn().mockReturnValue({ insert }),
+    });
+
+    await expect(createClient(buildFormData({ name: "Acme" }))).rejects.toThrow(
+      "NEXT_REDIRECT:/clients?error=db%20down"
+    );
+  });
+
+  // ── updateClient: auth, validation, fallback, error ────────────────
+
+  it("redirects unauthorized users away from updateClient", async () => {
+    mocks.getCurrentUserContext.mockResolvedValue({ role: "warehouse" });
+
+    await expect(
+      updateClient(buildFormData({ id: "c-1", name: "X" }))
+    ).rejects.toThrow("NEXT_REDIRECT:/dashboard?error=unauthorized");
+
+    expect(mocks.createSupabaseAdminClient).not.toHaveBeenCalled();
+  });
+
+  it("rejects updateClient when id or name is missing", async () => {
+    mocks.getCurrentUserContext.mockResolvedValue({ role: "admin" });
+
+    await expect(
+      updateClient(buildFormData({ id: "", name: "X" }))
+    ).rejects.toThrow(
+      "NEXT_REDIRECT:/clients?error=Dados inválidos para atualizar cliente."
+    );
+  });
+
+  it("falls back to minimal update when columns are missing (42703)", async () => {
+    const eqTypeFull = vi
+      .fn()
+      .mockResolvedValue({ error: { code: "42703", message: "no column" } });
+    const eqIdFull = vi.fn().mockReturnValue({ eq: eqTypeFull });
+
+    const eqTypeMin = vi.fn().mockResolvedValue({ error: null });
+    const eqIdMin = vi.fn().mockReturnValue({ eq: eqTypeMin });
+
+    const update = vi
+      .fn()
+      .mockReturnValueOnce({ eq: eqIdFull })
+      .mockReturnValueOnce({ eq: eqIdMin });
+
+    mocks.getCurrentUserContext.mockResolvedValue({ role: "admin" });
+    mocks.resolveUniqueOrganizationSlug.mockResolvedValue("novo");
+    mocks.createSupabaseAdminClient.mockReturnValue({
+      from: vi.fn().mockReturnValue({ update }),
+    });
+
+    await expect(
+      updateClient(buildFormData({ id: "c-1", name: "Novo" }))
+    ).rejects.toThrow("NEXT_REDIRECT:/clients?success=Cliente atualizado.");
+
+    expect(update).toHaveBeenCalledTimes(2);
+    expect(update).toHaveBeenLastCalledWith({ name: "Novo", slug: "novo" });
+  });
+
+  it("redirects when 42703 fallback update also fails", async () => {
+    const eqTypeFull = vi
+      .fn()
+      .mockResolvedValue({ error: { code: "42703", message: "no column" } });
+    const eqIdFull = vi.fn().mockReturnValue({ eq: eqTypeFull });
+
+    const eqTypeMin = vi
+      .fn()
+      .mockResolvedValue({ error: { message: "fallback boom" } });
+    const eqIdMin = vi.fn().mockReturnValue({ eq: eqTypeMin });
+
+    const update = vi
+      .fn()
+      .mockReturnValueOnce({ eq: eqIdFull })
+      .mockReturnValueOnce({ eq: eqIdMin });
+
+    mocks.getCurrentUserContext.mockResolvedValue({ role: "admin" });
+    mocks.resolveUniqueOrganizationSlug.mockResolvedValue("novo");
+    mocks.createSupabaseAdminClient.mockReturnValue({
+      from: vi.fn().mockReturnValue({ update }),
+    });
+
+    await expect(
+      updateClient(buildFormData({ id: "c-1", name: "Novo" }))
+    ).rejects.toThrow("NEXT_REDIRECT:/clients?error=fallback%20boom");
+  });
+
+  it("redirects when updateClient fails with a generic error", async () => {
+    const eqType = vi.fn().mockResolvedValue({ error: { message: "db down" } });
+    const eqId = vi.fn().mockReturnValue({ eq: eqType });
+    const update = vi.fn().mockReturnValue({ eq: eqId });
+
+    mocks.getCurrentUserContext.mockResolvedValue({ role: "admin" });
+    mocks.resolveUniqueOrganizationSlug.mockResolvedValue("novo");
+    mocks.createSupabaseAdminClient.mockReturnValue({
+      from: vi.fn().mockReturnValue({ update }),
+    });
+
+    await expect(
+      updateClient(buildFormData({ id: "c-1", name: "Novo" }))
+    ).rejects.toThrow("NEXT_REDIRECT:/clients?error=db%20down");
+  });
+
+  // ── deleteClient: auth, success, error ─────────────────────────────
+
+  it("redirects unauthorized users away from deleteClient", async () => {
+    mocks.getCurrentUserContext.mockResolvedValue(null);
+
+    await expect(
+      deleteClient(buildFormData({ id: "c-1" }))
+    ).rejects.toThrow("NEXT_REDIRECT:/dashboard?error=unauthorized");
+
+    expect(mocks.createSupabaseAdminClient).not.toHaveBeenCalled();
+  });
+
+  it("deletes a client filtering by id and type, then redirects with success", async () => {
+    const eqType = vi.fn().mockResolvedValue({ error: null });
+    const eqId = vi.fn().mockReturnValue({ eq: eqType });
+    const del = vi.fn().mockReturnValue({ eq: eqId });
+
+    mocks.getCurrentUserContext.mockResolvedValue({ role: "admin" });
+    mocks.createSupabaseAdminClient.mockReturnValue({
+      from: vi.fn().mockReturnValue({ delete: del }),
+    });
+
+    await expect(
+      deleteClient(buildFormData({ id: "c-1" }))
+    ).rejects.toThrow("NEXT_REDIRECT:/clients?success=Cliente apagado.");
+
+    expect(eqId).toHaveBeenCalledWith("id", "c-1");
+    expect(eqType).toHaveBeenCalledWith("type", "client");
+    expect(mocks.revalidatePath).toHaveBeenCalledWith("/clients");
+  });
+
+  it("redirects when deleteClient fails with a DB error", async () => {
+    const eqType = vi.fn().mockResolvedValue({ error: { message: "fk violation" } });
+    const eqId = vi.fn().mockReturnValue({ eq: eqType });
+    const del = vi.fn().mockReturnValue({ eq: eqId });
+
+    mocks.getCurrentUserContext.mockResolvedValue({ role: "admin" });
+    mocks.createSupabaseAdminClient.mockReturnValue({
+      from: vi.fn().mockReturnValue({ delete: del }),
+    });
+
+    await expect(
+      deleteClient(buildFormData({ id: "c-1" }))
+    ).rejects.toThrow("NEXT_REDIRECT:/clients?error=fk%20violation");
+  });
 });

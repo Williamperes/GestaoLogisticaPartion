@@ -122,6 +122,31 @@ describe("scanLoadUnit", () => {
     expect(result.error).toMatch(/vazio/i);
   });
 
+  it("propaga erro do banco ao buscar a linha event_equipment", async () => {
+    mocks.getEquipmentUnitByQrCode.mockResolvedValue(VALID_UNIT);
+    mocks.createSupabaseAdminClient.mockReturnValue(
+      fakeSupabase({
+        event_equipment: [() => chain({ data: null, error: { message: "ee boom" } })],
+      })
+    );
+    const result = await scanLoadUnit("evt-1", "QR");
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("ee boom");
+  });
+
+  it("propaga erro do upsert da unit", async () => {
+    mocks.getEquipmentUnitByQrCode.mockResolvedValue(VALID_UNIT);
+    mocks.createSupabaseAdminClient.mockReturnValue(
+      fakeSupabase({
+        event_equipment: [() => chain({ data: { id: "ee-1", qty: 1 }, error: null })],
+        event_equipment_units: [() => chain({ error: { message: "upsert boom" } })],
+      })
+    );
+    const result = await scanLoadUnit("evt-1", "QR");
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("upsert boom");
+  });
+
   it("happy path: upsert event_equipment_units e retorna ok", async () => {
     mocks.getEquipmentUnitByQrCode.mockResolvedValue(VALID_UNIT);
     const supabase = fakeSupabase({
@@ -256,6 +281,49 @@ describe("scanReturnUnit", () => {
     expect(result.error).toMatch(/autentic/i);
   });
 
+  it("rejeita QR vazio", async () => {
+    const result = await scanReturnUnit("evt-1", "   ");
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/vazio/i);
+  });
+
+  it("propaga erro do banco ao buscar a linha event_equipment", async () => {
+    mocks.getEquipmentUnitByQrCode.mockResolvedValue(VALID_UNIT);
+    mocks.createSupabaseAdminClient.mockReturnValue(
+      fakeSupabase({
+        event_equipment: [() => chain({ data: null, error: { message: "ee boom" } })],
+      })
+    );
+    const result = await scanReturnUnit("evt-1", "QR");
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("ee boom");
+  });
+
+  it("rejeita QR não vinculado à OS", async () => {
+    mocks.getEquipmentUnitByQrCode.mockResolvedValue(VALID_UNIT);
+    mocks.createSupabaseAdminClient.mockReturnValue(
+      fakeSupabase({
+        event_equipment: [() => chain({ data: null, error: null })],
+      })
+    );
+    const result = await scanReturnUnit("evt-1", "QR");
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/não está/i);
+  });
+
+  it("propaga erro do banco no update da unit", async () => {
+    mocks.getEquipmentUnitByQrCode.mockResolvedValue(VALID_UNIT);
+    mocks.createSupabaseAdminClient.mockReturnValue(
+      fakeSupabase({
+        event_equipment: [() => chain({ data: { id: "ee-1", qty: 1 }, error: null })],
+        event_equipment_units: [() => chain({ data: null, error: { message: "upd boom" } })],
+      })
+    );
+    const result = await scanReturnUnit("evt-1", "QR");
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("upd boom");
+  });
+
   it("rejeita unit não carregada ou já retornada (update não encontra row)", async () => {
     mocks.getEquipmentUnitByQrCode.mockResolvedValue(VALID_UNIT);
     const supabase = fakeSupabase({
@@ -372,6 +440,63 @@ describe("unscanLoadUnit", () => {
     expect(result.ok).toBe(false);
     expect(result.error).toMatch(/não estava carregada/i);
   });
+
+  it("rejeita sem autenticação", async () => {
+    mocks.getCurrentAuthUser.mockResolvedValue(null);
+    const result = await unscanLoadUnit("evt-1", "QR");
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/autentic/i);
+  });
+
+  it("rejeita QR vazio", async () => {
+    const result = await unscanLoadUnit("evt-1", "  ");
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/vazio/i);
+  });
+
+  it("rejeita QR não encontrado", async () => {
+    mocks.getEquipmentUnitByQrCode.mockResolvedValue(null);
+    const result = await unscanLoadUnit("evt-1", "QR");
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/não encontrado/i);
+  });
+
+  it("propaga erro do banco ao buscar a linha event_equipment", async () => {
+    mocks.getEquipmentUnitByQrCode.mockResolvedValue(VALID_UNIT);
+    mocks.createSupabaseAdminClient.mockReturnValue(
+      fakeSupabase({
+        event_equipment: [() => chain({ data: null, error: { message: "ee boom" } })],
+      })
+    );
+    const result = await unscanLoadUnit("evt-1", "QR");
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("ee boom");
+  });
+
+  it("rejeita QR não vinculado à OS", async () => {
+    mocks.getEquipmentUnitByQrCode.mockResolvedValue(VALID_UNIT);
+    mocks.createSupabaseAdminClient.mockReturnValue(
+      fakeSupabase({
+        event_equipment: [() => chain({ data: null, error: null })],
+      })
+    );
+    const result = await unscanLoadUnit("evt-1", "QR");
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/não está/i);
+  });
+
+  it("propaga erro do banco no delete", async () => {
+    mocks.getEquipmentUnitByQrCode.mockResolvedValue(VALID_UNIT);
+    mocks.createSupabaseAdminClient.mockReturnValue(
+      fakeSupabase({
+        event_equipment: [() => chain({ data: EE_ROW, error: null })],
+        event_equipment_units: [() => chain({ data: null, error: { message: "del boom" } })],
+      })
+    );
+    const result = await unscanLoadUnit("evt-1", "QR");
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("del boom");
+  });
 });
 
 describe("unscanReturnUnit", () => {
@@ -408,6 +533,63 @@ describe("unscanReturnUnit", () => {
     expect(result.ok).toBe(false);
     expect(result.error).toMatch(/não estava retornada/i);
   });
+
+  it("rejeita sem autenticação", async () => {
+    mocks.getCurrentAuthUser.mockResolvedValue(null);
+    const result = await unscanReturnUnit("evt-1", "QR");
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/autentic/i);
+  });
+
+  it("rejeita QR vazio", async () => {
+    const result = await unscanReturnUnit("evt-1", "  ");
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/vazio/i);
+  });
+
+  it("rejeita QR não encontrado", async () => {
+    mocks.getEquipmentUnitByQrCode.mockResolvedValue(null);
+    const result = await unscanReturnUnit("evt-1", "QR");
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/não encontrado/i);
+  });
+
+  it("propaga erro do banco ao buscar a linha event_equipment", async () => {
+    mocks.getEquipmentUnitByQrCode.mockResolvedValue(VALID_UNIT);
+    mocks.createSupabaseAdminClient.mockReturnValue(
+      fakeSupabase({
+        event_equipment: [() => chain({ data: null, error: { message: "ee boom" } })],
+      })
+    );
+    const result = await unscanReturnUnit("evt-1", "QR");
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("ee boom");
+  });
+
+  it("rejeita QR não vinculado à OS", async () => {
+    mocks.getEquipmentUnitByQrCode.mockResolvedValue(VALID_UNIT);
+    mocks.createSupabaseAdminClient.mockReturnValue(
+      fakeSupabase({
+        event_equipment: [() => chain({ data: null, error: null })],
+      })
+    );
+    const result = await unscanReturnUnit("evt-1", "QR");
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/não está/i);
+  });
+
+  it("propaga erro do banco no update", async () => {
+    mocks.getEquipmentUnitByQrCode.mockResolvedValue(VALID_UNIT);
+    mocks.createSupabaseAdminClient.mockReturnValue(
+      fakeSupabase({
+        event_equipment: [() => chain({ data: EE_ROW, error: null })],
+        event_equipment_units: [() => chain({ data: null, error: { message: "upd boom" } })],
+      })
+    );
+    const result = await unscanReturnUnit("evt-1", "QR");
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("upd boom");
+  });
 });
 
 describe("manualLoadUnit", () => {
@@ -432,6 +614,23 @@ describe("manualLoadUnit", () => {
     const result = await manualLoadUnit("evt-1", "ee-1");
     expect(result.ok).toBe(true);
     expect(result.eventEquipmentId).toBe("ee-1");
+  });
+
+  it("trata count e used nulos como zero/vazio (nullish fallbacks)", async () => {
+    const supabase = fakeSupabase({
+      event_equipment: [() => chain({ data: { ...EE_ROW, qty: 1 }, error: null }), () => chain({ error: null })],
+      event_equipment_units: [
+        () => chain({ count: undefined, error: null }), // already → ?? 0
+        () => chain({ data: null, error: null }), // used → ?? []
+        () => chain({ error: null }), // upsert
+        () => chain({ count: undefined, error: null }), // syncLoadedState count → ?? 0
+      ],
+      equipment_units: [() => chain({ data: { id: "unit-free" }, error: null })],
+    });
+    mocks.createSupabaseAdminClient.mockReturnValue(supabase);
+
+    const result = await manualLoadUnit("evt-1", "ee-1");
+    expect(result.ok).toBe(true);
   });
 
   it("rejeita quando a quantidade já está completa", async () => {
@@ -460,6 +659,62 @@ describe("manualLoadUnit", () => {
     const result = await manualLoadUnit("evt-1", "ee-1");
     expect(result.ok).toBe(false);
     expect(result.error).toMatch(/sem unidades disponíveis/i);
+  });
+
+  it("rejeita sem autenticação", async () => {
+    mocks.getCurrentAuthUser.mockResolvedValue(null);
+    const result = await manualLoadUnit("evt-1", "ee-1");
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/autentic/i);
+  });
+
+  it("propaga erro do banco ao buscar a linha event_equipment", async () => {
+    mocks.createSupabaseAdminClient.mockReturnValue(
+      fakeSupabase({
+        event_equipment: [() => chain({ data: null, error: { message: "ee boom" } })],
+      })
+    );
+    const result = await manualLoadUnit("evt-1", "ee-1");
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("ee boom");
+  });
+
+  it("rejeita quando o equipamento não está na OS", async () => {
+    mocks.createSupabaseAdminClient.mockReturnValue(
+      fakeSupabase({
+        event_equipment: [() => chain({ data: null, error: null })],
+      })
+    );
+    const result = await manualLoadUnit("evt-1", "ee-1");
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/não encontrado/i);
+  });
+
+  it("propaga erro do upsert e exclui unidades já usadas (com variante)", async () => {
+    const unitsQuery = chain({ data: { id: "unit-free" }, error: null });
+    const supabase = fakeSupabase({
+      event_equipment: [
+        () => chain({ data: { ...EE_ROW, variant_id: "var-1" }, error: null }),
+      ],
+      event_equipment_units: [
+        () => chain({ count: 0, error: null }), // já carregadas (0 < 3)
+        () => chain({ data: [{ equipment_unit_id: "u-used" }], error: null }), // usadas
+        () => chain({ error: { message: "upsert boom" } }), // upsert falha
+      ],
+      equipment_units: [() => unitsQuery],
+    });
+    mocks.createSupabaseAdminClient.mockReturnValue(supabase);
+
+    const result = await manualLoadUnit("evt-1", "ee-1");
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("upsert boom");
+    // variante não-null → usa .eq('variant_id', X) e exclui usados via .not('id','in',...)
+    expect(
+      unitsQuery._calls.some((c) => c.method === "eq" && c.args[0] === "variant_id")
+    ).toBe(true);
+    expect(
+      unitsQuery._calls.some((c) => c.method === "not" && c.args[0] === "id")
+    ).toBe(true);
   });
 });
 
@@ -495,6 +750,50 @@ describe("manualUnloadUnit", () => {
     expect(result.ok).toBe(false);
     expect(result.error).toMatch(/nada para desbipar/i);
   });
+
+  it("rejeita sem autenticação", async () => {
+    mocks.getCurrentAuthUser.mockResolvedValue(null);
+    const result = await manualUnloadUnit("evt-1", "ee-1");
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/autentic/i);
+  });
+
+  it("propaga erro do banco ao buscar a linha event_equipment", async () => {
+    mocks.createSupabaseAdminClient.mockReturnValue(
+      fakeSupabase({
+        event_equipment: [() => chain({ data: null, error: { message: "ee boom" } })],
+      })
+    );
+    const result = await manualUnloadUnit("evt-1", "ee-1");
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("ee boom");
+  });
+
+  it("rejeita quando o equipamento não está na OS", async () => {
+    mocks.createSupabaseAdminClient.mockReturnValue(
+      fakeSupabase({
+        event_equipment: [() => chain({ data: null, error: null })],
+      })
+    );
+    const result = await manualUnloadUnit("evt-1", "ee-1");
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/não encontrado/i);
+  });
+
+  it("propaga erro do banco no delete", async () => {
+    mocks.createSupabaseAdminClient.mockReturnValue(
+      fakeSupabase({
+        event_equipment: [() => chain({ data: EE_ROW, error: null })],
+        event_equipment_units: [
+          () => chain({ data: { id: "eeu-9" }, error: null }),
+          () => chain({ error: { message: "del boom" } }),
+        ],
+      })
+    );
+    const result = await manualUnloadUnit("evt-1", "ee-1");
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("del boom");
+  });
 });
 
 describe("manualReturnUnit / manualUnreturnUnit", () => {
@@ -510,6 +809,21 @@ describe("manualReturnUnit / manualUnreturnUnit", () => {
         () => chain({ data: { id: "eeu-1" }, error: null }), // acha carregada-não-retornada
         () => chain({ error: null }), // update returned_at
         () => chain({ count: 1, error: null }), // sync count
+      ],
+    });
+    mocks.createSupabaseAdminClient.mockReturnValue(supabase);
+
+    const result = await manualReturnUnit("evt-1", "ee-1");
+    expect(result.ok).toBe(true);
+  });
+
+  it("manualReturnUnit trata count nulo do sync como zero", async () => {
+    const supabase = fakeSupabase({
+      event_equipment: [() => chain({ data: EE_ROW, error: null }), () => chain({ error: null })],
+      event_equipment_units: [
+        () => chain({ data: { id: "eeu-1" }, error: null }),
+        () => chain({ error: null }),
+        () => chain({ count: undefined, error: null }), // syncReturnedState count → ?? 0
       ],
     });
     mocks.createSupabaseAdminClient.mockReturnValue(supabase);
@@ -543,5 +857,105 @@ describe("manualReturnUnit / manualUnreturnUnit", () => {
     const result = await manualReturnUnit("evt-1", "ee-1");
     expect(result.ok).toBe(false);
     expect(result.error).toMatch(/nenhuma unidade carregada/i);
+  });
+
+  it("manualReturnUnit rejeita sem autenticação", async () => {
+    mocks.getCurrentAuthUser.mockResolvedValue(null);
+    const result = await manualReturnUnit("evt-1", "ee-1");
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/autentic/i);
+  });
+
+  it("manualReturnUnit propaga erro do banco ao buscar a linha", async () => {
+    mocks.createSupabaseAdminClient.mockReturnValue(
+      fakeSupabase({
+        event_equipment: [() => chain({ data: null, error: { message: "ee boom" } })],
+      })
+    );
+    const result = await manualReturnUnit("evt-1", "ee-1");
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("ee boom");
+  });
+
+  it("manualReturnUnit rejeita quando o equipamento não está na OS", async () => {
+    mocks.createSupabaseAdminClient.mockReturnValue(
+      fakeSupabase({
+        event_equipment: [() => chain({ data: null, error: null })],
+      })
+    );
+    const result = await manualReturnUnit("evt-1", "ee-1");
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/não encontrado/i);
+  });
+
+  it("manualReturnUnit propaga erro do banco no update", async () => {
+    mocks.createSupabaseAdminClient.mockReturnValue(
+      fakeSupabase({
+        event_equipment: [() => chain({ data: EE_ROW, error: null })],
+        event_equipment_units: [
+          () => chain({ data: { id: "eeu-1" }, error: null }),
+          () => chain({ error: { message: "upd boom" } }),
+        ],
+      })
+    );
+    const result = await manualReturnUnit("evt-1", "ee-1");
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("upd boom");
+  });
+
+  it("manualUnreturnUnit rejeita sem autenticação", async () => {
+    mocks.getCurrentAuthUser.mockResolvedValue(null);
+    const result = await manualUnreturnUnit("evt-1", "ee-1");
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/autentic/i);
+  });
+
+  it("manualUnreturnUnit propaga erro do banco ao buscar a linha", async () => {
+    mocks.createSupabaseAdminClient.mockReturnValue(
+      fakeSupabase({
+        event_equipment: [() => chain({ data: null, error: { message: "ee boom" } })],
+      })
+    );
+    const result = await manualUnreturnUnit("evt-1", "ee-1");
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("ee boom");
+  });
+
+  it("manualUnreturnUnit rejeita quando o equipamento não está na OS", async () => {
+    mocks.createSupabaseAdminClient.mockReturnValue(
+      fakeSupabase({
+        event_equipment: [() => chain({ data: null, error: null })],
+      })
+    );
+    const result = await manualUnreturnUnit("evt-1", "ee-1");
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/não encontrado/i);
+  });
+
+  it("manualUnreturnUnit rejeita quando não há nada para desbipar", async () => {
+    mocks.createSupabaseAdminClient.mockReturnValue(
+      fakeSupabase({
+        event_equipment: [() => chain({ data: EE_ROW, error: null })],
+        event_equipment_units: [() => chain({ data: null, error: null })],
+      })
+    );
+    const result = await manualUnreturnUnit("evt-1", "ee-1");
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/nada para desbipar/i);
+  });
+
+  it("manualUnreturnUnit propaga erro do banco no update", async () => {
+    mocks.createSupabaseAdminClient.mockReturnValue(
+      fakeSupabase({
+        event_equipment: [() => chain({ data: EE_ROW, error: null })],
+        event_equipment_units: [
+          () => chain({ data: { id: "eeu-1" }, error: null }),
+          () => chain({ error: { message: "upd boom" } }),
+        ],
+      })
+    );
+    const result = await manualUnreturnUnit("evt-1", "ee-1");
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("upd boom");
   });
 });

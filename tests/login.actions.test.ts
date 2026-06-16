@@ -20,7 +20,7 @@ vi.mock("@/lib/auth/session", () => ({
   getDefaultAppPathForUser: mocks.getDefaultAppPathForUser,
 }));
 
-import { signInWithPassword } from "@/app/(auth)/actions";
+import { signInWithPassword, signOut } from "@/app/(auth)/actions";
 
 function buildFormData(values: Record<string, string>) {
   const formData = new FormData();
@@ -85,5 +85,47 @@ describe("signInWithPassword", () => {
     ).rejects.toThrow("NEXT_REDIRECT:/dashboard");
 
     expect(mocks.getDefaultAppPathForUser).toHaveBeenCalledWith("user-1");
+  });
+
+  it("redirects back to login when only the password is missing", async () => {
+    await expect(
+      signInWithPassword(buildFormData({ email: "user@example.com" }))
+    ).rejects.toThrow("NEXT_REDIRECT:/login?error=Preencha email e senha.");
+
+    expect(mocks.createSupabaseServerClient).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the default error message when Supabase gives no message", async () => {
+    const signInWithPasswordMock = vi.fn().mockResolvedValue({
+      data: { user: null },
+      error: null,
+    });
+
+    mocks.createSupabaseServerClient.mockResolvedValue({
+      auth: { signInWithPassword: signInWithPasswordMock },
+    });
+
+    await expect(
+      signInWithPassword(buildFormData({ email: "user@example.com", password: "secret" }))
+    ).rejects.toThrow(
+      `NEXT_REDIRECT:/login?error=${encodeURIComponent("Nao foi possivel entrar.")}`
+    );
+  });
+});
+
+describe("signOut", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("signs out via Supabase and redirects to login", async () => {
+    const signOutMock = vi.fn().mockResolvedValue({ error: null });
+    mocks.createSupabaseServerClient.mockResolvedValue({
+      auth: { signOut: signOutMock },
+    });
+
+    await expect(signOut()).rejects.toThrow("NEXT_REDIRECT:/login");
+
+    expect(signOutMock).toHaveBeenCalled();
   });
 });

@@ -1,0 +1,115 @@
+// @vitest-environment jsdom
+import { describe, expect, it, vi } from "vitest";
+import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+
+vi.mock("@/app/(dashboard)/events/actions", () => ({
+  createEvent: vi.fn(),
+}));
+
+import { EventSheet } from "@/app/(dashboard)/events/EventSheet";
+import type { ClientOrganization } from "@/lib/clients";
+import type { ChecklistTemplate } from "@/lib/checklist-templates";
+
+const CLIENTS: ClientOrganization[] = [
+  {
+    id: "c-1",
+    name: "ACME Corp",
+    city: "São Paulo",
+  } as ClientOrganization,
+  {
+    id: "c-2",
+    name: "Globo",
+    city: null,
+  } as ClientOrganization,
+];
+
+const TEMPLATES: ChecklistTemplate[] = [
+  {
+    id: "t-1",
+    name: "Festival",
+    isDefault: false,
+    requiredCount: 3,
+  } as ChecklistTemplate,
+  {
+    id: "t-2",
+    name: "Corporativo",
+    isDefault: true,
+    requiredCount: 1,
+  } as ChecklistTemplate,
+];
+
+describe("EventSheet", () => {
+  it("renderiza o gatilho 'Nova OS'", () => {
+    render(<EventSheet clients={CLIENTS} templates={TEMPLATES} />);
+    expect(screen.getByRole("button", { name: /Nova OS/i })).toBeInTheDocument();
+    // Conteúdo só aparece após clicar.
+    expect(
+      screen.queryByPlaceholderText("Ex.: Festival Aurora 2025")
+    ).not.toBeInTheDocument();
+  });
+
+  it("abre o sheet e revela os campos do formulário", async () => {
+    const user = userEvent.setup();
+    render(<EventSheet clients={CLIENTS} templates={TEMPLATES} />);
+
+    await user.click(screen.getByRole("button", { name: /Nova OS/i }));
+
+    expect(
+      await screen.findByPlaceholderText("Ex.: Festival Aurora 2025")
+    ).toBeInTheDocument();
+    expect(screen.getByText("Nova Ordem de Serviço")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Ex.: Arena Multiuso SP")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Criar Ordem de Serviço/i })
+    ).toBeInTheDocument();
+  });
+
+  it("lista os clientes como opções do select", async () => {
+    const user = userEvent.setup();
+    render(<EventSheet clients={CLIENTS} templates={TEMPLATES} />);
+    await user.click(screen.getByRole("button", { name: /Nova OS/i }));
+
+    await screen.findByPlaceholderText("Ex.: Festival Aurora 2025");
+    expect(screen.getByRole("option", { name: /ACME Corp · São Paulo/ })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Globo" })).toBeInTheDocument();
+  });
+
+  it("seleciona o template padrão e mostra os templates disponíveis", async () => {
+    const user = userEvent.setup();
+    render(<EventSheet clients={CLIENTS} templates={TEMPLATES} />);
+    await user.click(screen.getByRole("button", { name: /Nova OS/i }));
+
+    await screen.findByPlaceholderText("Ex.: Festival Aurora 2025");
+    const select = screen.getByRole("combobox", { name: /Template de Checklist/i });
+    expect((select as HTMLSelectElement).value).toBe("t-2");
+    expect(
+      screen.getByRole("option", { name: /Corporativo · padrão · 1 obrigatório/ })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("option", { name: /Festival · 3 obrigatórios/ })
+    ).toBeInTheDocument();
+  });
+
+  it("mostra aviso quando não há templates cadastrados", async () => {
+    const user = userEvent.setup();
+    render(<EventSheet clients={CLIENTS} templates={[]} />);
+    await user.click(screen.getByRole("button", { name: /Nova OS/i }));
+
+    expect(
+      await screen.findByText(/Nenhum template cadastrado/i)
+    ).toBeInTheDocument();
+  });
+
+  it("permite digitar no campo de nome", async () => {
+    const user = userEvent.setup();
+    render(<EventSheet clients={CLIENTS} templates={TEMPLATES} />);
+    await user.click(screen.getByRole("button", { name: /Nova OS/i }));
+
+    const nameInput = (await screen.findByPlaceholderText(
+      "Ex.: Festival Aurora 2025"
+    )) as HTMLInputElement;
+    await user.type(nameInput, "Show Open Air");
+    expect(nameInput.value).toBe("Show Open Air");
+  });
+});
