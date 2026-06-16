@@ -4,13 +4,24 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 import { getCurrentUserContext } from "@/lib/auth/session";
-import { generateQrToken } from "@/lib/inventory";
+import { generateQrToken, getEquipmentAllocations } from "@/lib/inventory";
 
 const WRITE_ROLES = ["super_admin", "admin", "operations", "warehouse"] as const;
 
 async function requireWriteRole() {
   const context = await getCurrentUserContext();
   if (!context?.role || !WRITE_ROLES.includes(context.role as (typeof WRITE_ROLES)[number])) {
+    redirect("/dashboard?error=unauthorized");
+  }
+  return context;
+}
+
+// Apagar é destrutivo (cascateia units/variantes/alocações): só admin.
+const DELETE_ROLES = ["super_admin", "admin"] as const;
+
+async function requireDeleteRole() {
+  const context = await getCurrentUserContext();
+  if (!context?.role || !DELETE_ROLES.includes(context.role as (typeof DELETE_ROLES)[number])) {
     redirect("/dashboard?error=unauthorized");
   }
   return context;
@@ -206,7 +217,7 @@ export async function setUnitQrCode(
   const supabase = createSupabaseAdminClient();
   const { data: unit, error: updateError } = await supabase
     .from("equipment_units")
-    .update({ qr_code: trimmedQr })
+    .update({ qr_code: trimmedQr, qr_linked_at: new Date().toISOString() })
     .eq("id", trimmedId)
     .select("id, equipment_id")
     .maybeSingle();
@@ -246,6 +257,52 @@ export async function deactivateEquipment(formData: FormData) {
 
   revalidatePath("/inventory");
   redirect("/inventory?success=Equipamento desativado.");
+}
+
+// ──────────────────────────────────────────────────────────────────
+// deleteEquipment
+// Apaga em definitivo. As FKs cascateiam units, variantes e bulk; por
+// isso bloqueamos se houver OS ativa usando o equipamento (a alocação
+// também cascatearia silenciosamente).
+// ──────────────────────────────────────────────────────────────────
+export async function deleteEquipment(formData: FormData) {
+  const context = await requireDeleteRole();
+  const organizationId = context.primaryOrganization?.id;
+
+  const id = String(formData.get("id") ?? "").trim();
+  if (!organizationId || !id) redirect("/inventory?error=Equipamento inválido.");
+
+  const supabase = createSupabaseAdminClient();
+
+  // Garante que o equipamento pertence à organização do usuário.
+  const { data: equip, error: fetchErr } = await supabase
+    .from("equipment")
+    .select("id")
+    .eq("id", id)
+    .eq("organization_id", organizationId)
+    .maybeSingle();
+  if (fetchErr) redirect(`/inventory?error=${encodeURIComponent(fetchErr.message)}`);
+  if (!equip) redirect("/inventory?error=Equipamento não encontrado.");
+
+  const allocations = await getEquipmentAllocations(id);
+  if (allocations.length > 0) {
+    redirect(
+      `/inventory?error=${encodeURIComponent(
+        "Equipamento alocado em OS ativa. Remova das OS antes de apagar."
+      )}`
+    );
+  }
+
+  const { error } = await supabase
+    .from("equipment")
+    .delete()
+    .eq("id", id)
+    .eq("organization_id", organizationId);
+
+  if (error) redirect(`/inventory?error=${encodeURIComponent(error.message)}`);
+
+  revalidatePath("/inventory");
+  redirect("/inventory?success=Equipamento apagado.");
 }
 
 // ──────────────────────────────────────────────────────────────────

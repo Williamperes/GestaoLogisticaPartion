@@ -191,29 +191,3 @@ export const mockCheckoutItems = [
   { id: "e5", name: "Switch Barco E2", serial: "BRC-0012", confirmed: false },
   { id: "e6", name: "DI Box Radial #1", serial: "DI-0067", confirmed: false },
 ];
-
-// DASHBOARD KPIs
-export const mockKPIs = {
-  eventsThisMonth: 5,
-  eventsNextMonth: 3,
-  itemsInMaintenance: 4,
-  utilizationRate: 78,
-  pendingReturns: 2,
-  activeAlerts: 3,
-};
-
-export const mockUtilizationChart = [
-  { month: "Out", utilization: 65 },
-  { month: "Nov", utilization: 72 },
-  { month: "Dez", utilization: 88 },
-  { month: "Jan", utilization: 54 },
-  { month: "Fev", utilization: 70 },
-  { month: "Mar", utilization: 78 },
-];
-
-export const mockCategoryChart = [
-  { name: "Áudio", value: 38 },
-  { name: "Iluminação", value: 31 },
-  { name: "Imagem", value: 18 },
-  { name: "Cabeamento", value: 13 },
-];

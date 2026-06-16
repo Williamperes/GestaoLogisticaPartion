@@ -11,7 +11,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { getCurrentUserContext } from "@/lib/auth/session";
-import { getDashboardKPIs, getCategoryStats } from "@/lib/dashboard";
+import { getDashboardKPIs, getCategoryStats, getUtilizationHistory } from "@/lib/dashboard";
 import { listEvents } from "@/lib/events";
 import { formatDateBR } from "@/lib/dates";
 import { CardSpotlight } from "@/components/ui/aceternity/card-spotlight";
@@ -24,14 +24,16 @@ export default async function DashboardPage() {
   if (context?.role === "warehouse") redirect("/scan");
   const organizationId = context?.primaryOrganization?.id;
 
-  const [kpis, categoryStats, upcomingEvents] = organizationId
+  const [kpis, categoryStats, utilizationHistory, upcomingEvents] = organizationId
     ? await Promise.all([
         getDashboardKPIs(organizationId),
         getCategoryStats(organizationId),
+        getUtilizationHistory(organizationId),
         listEvents(organizationId),
       ])
     : [
         { eventsThisMonth: 0, eventsNextMonth: 0, itemsInMaintenance: 0, utilizationRate: 0, pendingReturns: 0 },
+        [],
         [],
         [],
       ];
@@ -113,7 +115,7 @@ export default async function DashboardPage() {
         </CardSpotlight>
       </div>
 
-      <DashboardCharts categoryStats={categoryStats} />
+      <DashboardCharts categoryStats={categoryStats} utilizationHistory={utilizationHistory} />
 
       <div className="border border-border rounded-xl bg-card">
         <div className="flex items-center justify-between px-5 py-4 border-b border-border">

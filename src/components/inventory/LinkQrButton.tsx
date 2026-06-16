@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { Check } from "lucide-react";
 import { toast } from "sonner";
 
 import { setUnitQrCode } from "@/app/(dashboard)/inventory/actions";
@@ -17,9 +18,11 @@ import { QrScanner } from "@/components/inventory/QrScanner";
 interface LinkQrButtonProps {
   unitId: string;
   unitSerial: string;
+  /** Indica que a unidade já possui um QR vinculado. */
+  isLinked?: boolean;
 }
 
-export function LinkQrButton({ unitId, unitSerial }: LinkQrButtonProps) {
+export function LinkQrButton({ unitId, unitSerial, isLinked = false }: LinkQrButtonProps) {
   const [open, setOpen] = useState(false);
   const [manual, setManual] = useState("");
   const [busy, setBusy] = useState(false);
@@ -41,14 +44,27 @@ export function LinkQrButton({ unitId, unitSerial }: LinkQrButtonProps) {
   return (
     <Sheet open={open} onOpenChange={setOpen}>
       <SheetTrigger
-        className="inline-flex items-center gap-1 rounded-md border border-dashed border-border px-2 py-1 text-xs text-muted-foreground hover:border-foreground hover:text-foreground"
+        className={
+          isLinked
+            ? "inline-flex items-center gap-1 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-xs font-medium text-emerald-600 hover:bg-emerald-500/20"
+            : "inline-flex items-center gap-1 rounded-md border border-dashed border-border px-2 py-1 text-xs text-muted-foreground hover:border-foreground hover:text-foreground"
+        }
         type="button"
       >
-        Vincular QR
+        {isLinked ? (
+          <>
+            <Check className="h-3 w-3" />
+            Vinculado · Trocar
+          </>
+        ) : (
+          "Vincular QR"
+        )}
       </SheetTrigger>
       <SheetContent>
         <SheetHeader>
-          <SheetTitle>Vincular QR — {unitSerial}</SheetTitle>
+          <SheetTitle>
+            {isLinked ? "Trocar QR" : "Vincular QR"} — {unitSerial}
+          </SheetTitle>
           <SheetDescription>
             Bipe o adesivo QR ou digite o código manualmente.
           </SheetDescription>

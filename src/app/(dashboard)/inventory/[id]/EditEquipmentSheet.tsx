@@ -12,7 +12,11 @@ import {
 } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { SubmitButton } from "@/components/ui/SubmitButton";
-import { updateEquipment, deactivateEquipment } from "@/app/(dashboard)/inventory/actions";
+import {
+  updateEquipment,
+  deactivateEquipment,
+  deleteEquipment,
+} from "@/app/(dashboard)/inventory/actions";
 import type { Equipment, EquipmentCategory } from "@/lib/inventory";
 
 const INPUT_CLASS =
@@ -21,9 +25,10 @@ const INPUT_CLASS =
 interface EditEquipmentSheetProps {
   equipment: Equipment;
   categories: EquipmentCategory[];
+  canDelete?: boolean;
 }
 
-export function EditEquipmentSheet({ equipment, categories }: EditEquipmentSheetProps) {
+export function EditEquipmentSheet({ equipment, categories, canDelete }: EditEquipmentSheetProps) {
   return (
     <Sheet>
       <SheetTrigger
@@ -134,7 +139,7 @@ export function EditEquipmentSheet({ equipment, categories }: EditEquipmentSheet
           </div>
         </form>
 
-        <div className="border-t border-border px-6 py-3">
+        <div className="flex items-center justify-between gap-4 border-t border-border px-6 py-3">
           <form
             action={deactivateEquipment}
             onSubmit={(e) => {
@@ -142,10 +147,32 @@ export function EditEquipmentSheet({ equipment, categories }: EditEquipmentSheet
             }}
           >
             <input type="hidden" name="id" value={equipment.id} />
-            <button type="submit" className="text-sm text-red-600 hover:underline">
+            <button type="submit" className="text-sm text-muted-foreground hover:underline">
               Desativar equipamento
             </button>
           </form>
+
+          {canDelete && (
+            <form
+              action={deleteEquipment}
+              onSubmit={(e) => {
+                if (
+                  !confirm(
+                    `Apagar "${equipment.name}" em definitivo? Isso remove também suas unidades e variantes. Esta ação não pode ser desfeita.`
+                  )
+                )
+                  e.preventDefault();
+              }}
+            >
+              <input type="hidden" name="id" value={equipment.id} />
+              <button
+                type="submit"
+                className="text-sm font-semibold text-red-600 hover:underline"
+              >
+                Apagar equipamento
+              </button>
+            </form>
+          )}
         </div>
       </SheetContent>
     </Sheet>

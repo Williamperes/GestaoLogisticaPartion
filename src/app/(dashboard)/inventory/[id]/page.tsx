@@ -46,6 +46,7 @@ export default async function InventoryDetailPage({ params, searchParams }: Prop
   const canWrite = ["super_admin", "admin", "operations", "warehouse"].includes(
     context?.role ?? ""
   );
+  const canDelete = ["super_admin", "admin"].includes(context?.role ?? "");
 
   return (
     <div className="max-w-4xl space-y-6">
@@ -84,7 +85,11 @@ export default async function InventoryDetailPage({ params, searchParams }: Prop
           <StatusBadge status={equipment.status} type="item" />
         </div>
         {canWrite && (
-          <EditEquipmentSheet equipment={equipment} categories={categories} />
+          <EditEquipmentSheet
+            equipment={equipment}
+            categories={categories}
+            canDelete={canDelete}
+          />
         )}
       </div>
 
@@ -209,6 +214,11 @@ export default async function InventoryDetailPage({ params, searchParams }: Prop
                   <th className="px-5 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                     Serial
                   </th>
+                  {equipment.hasVariants && (
+                    <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      Variante
+                    </th>
+                  )}
                   <th className="hidden px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground md:table-cell">
                     Patrimônio
                   </th>
@@ -227,6 +237,22 @@ export default async function InventoryDetailPage({ params, searchParams }: Prop
                     <td className="px-5 py-3 font-mono text-xs">
                       {unit.serial ?? <span className="text-muted-foreground">—</span>}
                     </td>
+                    {equipment.hasVariants && (
+                      <td className="px-4 py-3 text-xs">
+                        {(() => {
+                          const variantLabel = equipment.variants?.find(
+                            (v) => v.id === unit.variantId
+                          )?.label;
+                          return variantLabel ? (
+                            <span className="inline-flex items-center rounded-md border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 font-medium text-amber-700">
+                              {variantLabel}
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          );
+                        })()}
+                      </td>
+                    )}
                     <td className="hidden px-4 py-3 font-mono text-xs text-muted-foreground md:table-cell">
                       {unit.patrimony ?? "—"}
                     </td>
@@ -241,6 +267,7 @@ export default async function InventoryDetailPage({ params, searchParams }: Prop
                             <LinkQrButton
                               unitId={unit.id}
                               unitSerial={unit.serial ?? "unidade sem série"}
+                              isLinked={!!unit.qrLinkedAt}
                             />
                           )}
                         </div>

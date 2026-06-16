@@ -21,7 +21,16 @@ vi.mock("@/lib/auth/session", () => ({
 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
-import { scanLoadUnit, scanReturnUnit } from "@/app/(dashboard)/scan/actions";
+import {
+  manualLoadUnit,
+  manualReturnUnit,
+  manualUnloadUnit,
+  manualUnreturnUnit,
+  scanLoadUnit,
+  scanReturnUnit,
+  unscanLoadUnit,
+  unscanReturnUnit,
+} from "@/app/(dashboard)/scan/actions";
 
 /**
  * Builds a thenable chain that resolves to the given value and records
@@ -204,11 +213,13 @@ describe("scanLoadUnit", () => {
     expect(isCall?.args[1]).toBeNull();
   });
 
-  it("NÃO marca loaded=true se ainda faltam units", async () => {
+  it("reverte loaded/separated=false quando ainda faltam units", async () => {
     mocks.getEquipmentUnitByQrCode.mockResolvedValue(VALID_UNIT);
+    const eeUpdateChain = chain({ error: null });
     const supabase = fakeSupabase({
       event_equipment: [
         () => chain({ data: { id: "ee-1", qty: 5 }, error: null }),
+        () => eeUpdateChain,
       ],
       event_equipment_units: [
         () => chain({ error: null }),
@@ -219,8 +230,9 @@ describe("scanLoadUnit", () => {
 
     const result = await scanLoadUnit("evt-1", "QR-PARTIAL");
     expect(result.ok).toBe(true);
-    // Apenas 2 chamadas ao event_equipment (lookup inicial); update não foi chamado.
-    expect(supabase._calls().event_equipment).toBe(1);
+    // Carga parcial sincroniza a linha como não-carregada (simétrico ao desbipar).
+    const updateCall = eeUpdateChain._calls.find((c) => c.method === "update");
+    expect(updateCall?.args[0]).toMatchObject({ loaded: false, separated: false });
   });
 });
 
@@ -302,11 +314,13 @@ describe("scanReturnUnit", () => {
     });
   });
 
-  it("NÃO marca returned_at se ainda faltam units retornar", async () => {
+  it("mantém returned_at=null se ainda faltam units retornar", async () => {
     mocks.getEquipmentUnitByQrCode.mockResolvedValue(VALID_UNIT);
+    const eeReturnChain = chain({ error: null });
     const supabase = fakeSupabase({
       event_equipment: [
         () => chain({ data: { id: "ee-1", qty: 5 }, error: null }),
+        () => eeReturnChain,
       ],
       event_equipment_units: [
         () => chain({ data: { id: "eeu-1" }, error: null }),
@@ -317,6 +331,217 @@ describe("scanReturnUnit", () => {
 
     const result = await scanReturnUnit("evt-1", "QR-PARTIAL");
     expect(result.ok).toBe(true);
-    expect(supabase._calls().event_equipment).toBe(1);
+    const updateCall = eeReturnChain._calls.find((c) => c.method === "update");
+    expect(updateCall?.args[0]).toMatchObject({ returned_at: null });
+  });
+});
+
+const EE_ROW = { id: "ee-1", equipment_id: "eq-A", variant_id: null, qty: 3 };
+
+describe("unscanLoadUnit", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.getCurrentAuthUser.mockResolvedValue({ id: "user-1" });
+  });
+
+  it("happy path: apaga a unidade carregada e ressincroniza", async () => {
+    mocks.getEquipmentUnitByQrCode.mockResolvedValue(VALID_UNIT);
+    const supabase = fakeSupabase({
+      event_equipment: [() => chain({ data: EE_ROW, error: null }), () => chain({ error: null })],
+      event_equipment_units: [
+        () => chain({ data: { id: "eeu-1" }, error: null }), // delete ... select
+        () => chain({ count: 0, error: null }), // sync count
+      ],
+    });
+    mocks.createSupabaseAdminClient.mockReturnValue(supabase);
+
+    const result = await unscanLoadUnit("evt-1", "QR-OK");
+    expect(result.ok).toBe(true);
+    expect(result.eventEquipmentId).toBe("ee-1");
+  });
+
+  it("rejeita quando a unidade não estava carregada", async () => {
+    mocks.getEquipmentUnitByQrCode.mockResolvedValue(VALID_UNIT);
+    const supabase = fakeSupabase({
+      event_equipment: [() => chain({ data: EE_ROW, error: null })],
+      event_equipment_units: [() => chain({ data: null, error: null })],
+    });
+    mocks.createSupabaseAdminClient.mockReturnValue(supabase);
+
+    const result = await unscanLoadUnit("evt-1", "QR-OK");
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/não estava carregada/i);
+  });
+});
+
+describe("unscanReturnUnit", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.getCurrentAuthUser.mockResolvedValue({ id: "user-1" });
+  });
+
+  it("happy path: zera returned_at e ressincroniza", async () => {
+    mocks.getEquipmentUnitByQrCode.mockResolvedValue(VALID_UNIT);
+    const supabase = fakeSupabase({
+      event_equipment: [() => chain({ data: EE_ROW, error: null }), () => chain({ error: null })],
+      event_equipment_units: [
+        () => chain({ data: { id: "eeu-1" }, error: null }), // update ... select
+        () => chain({ count: 0, error: null }), // sync count
+      ],
+    });
+    mocks.createSupabaseAdminClient.mockReturnValue(supabase);
+
+    const result = await unscanReturnUnit("evt-1", "QR-OK");
+    expect(result.ok).toBe(true);
+    expect(result.eventEquipmentId).toBe("ee-1");
+  });
+
+  it("rejeita quando a unidade não estava retornada", async () => {
+    mocks.getEquipmentUnitByQrCode.mockResolvedValue(VALID_UNIT);
+    const supabase = fakeSupabase({
+      event_equipment: [() => chain({ data: EE_ROW, error: null })],
+      event_equipment_units: [() => chain({ data: null, error: null })],
+    });
+    mocks.createSupabaseAdminClient.mockReturnValue(supabase);
+
+    const result = await unscanReturnUnit("evt-1", "QR-OK");
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/não estava retornada/i);
+  });
+});
+
+describe("manualLoadUnit", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.getCurrentAuthUser.mockResolvedValue({ id: "user-1" });
+  });
+
+  it("happy path: escolhe unidade livre, faz upsert e ressincroniza", async () => {
+    const supabase = fakeSupabase({
+      event_equipment: [() => chain({ data: EE_ROW, error: null }), () => chain({ error: null })],
+      event_equipment_units: [
+        () => chain({ count: 1, error: null }), // já carregadas (1 < 3)
+        () => chain({ data: [], error: null }), // unidades já usadas
+        () => chain({ error: null }), // upsert
+        () => chain({ count: 2, error: null }), // sync count
+      ],
+      equipment_units: [() => chain({ data: { id: "unit-free" }, error: null })],
+    });
+    mocks.createSupabaseAdminClient.mockReturnValue(supabase);
+
+    const result = await manualLoadUnit("evt-1", "ee-1");
+    expect(result.ok).toBe(true);
+    expect(result.eventEquipmentId).toBe("ee-1");
+  });
+
+  it("rejeita quando a quantidade já está completa", async () => {
+    const supabase = fakeSupabase({
+      event_equipment: [() => chain({ data: { ...EE_ROW, qty: 2 }, error: null })],
+      event_equipment_units: [() => chain({ count: 2, error: null })],
+    });
+    mocks.createSupabaseAdminClient.mockReturnValue(supabase);
+
+    const result = await manualLoadUnit("evt-1", "ee-1");
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/já completa/i);
+  });
+
+  it("rejeita quando não há unidade disponível", async () => {
+    const supabase = fakeSupabase({
+      event_equipment: [() => chain({ data: EE_ROW, error: null })],
+      event_equipment_units: [
+        () => chain({ count: 0, error: null }),
+        () => chain({ data: [], error: null }),
+      ],
+      equipment_units: [() => chain({ data: null, error: null })],
+    });
+    mocks.createSupabaseAdminClient.mockReturnValue(supabase);
+
+    const result = await manualLoadUnit("evt-1", "ee-1");
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/sem unidades disponíveis/i);
+  });
+});
+
+describe("manualUnloadUnit", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.getCurrentAuthUser.mockResolvedValue({ id: "user-1" });
+  });
+
+  it("happy path: apaga uma unidade carregada e ressincroniza", async () => {
+    const supabase = fakeSupabase({
+      event_equipment: [() => chain({ data: EE_ROW, error: null }), () => chain({ error: null })],
+      event_equipment_units: [
+        () => chain({ data: { id: "eeu-9" }, error: null }), // acha row
+        () => chain({ error: null }), // delete
+        () => chain({ count: 1, error: null }), // sync count
+      ],
+    });
+    mocks.createSupabaseAdminClient.mockReturnValue(supabase);
+
+    const result = await manualUnloadUnit("evt-1", "ee-1");
+    expect(result.ok).toBe(true);
+  });
+
+  it("rejeita quando não há nada para desbipar", async () => {
+    const supabase = fakeSupabase({
+      event_equipment: [() => chain({ data: EE_ROW, error: null })],
+      event_equipment_units: [() => chain({ data: null, error: null })],
+    });
+    mocks.createSupabaseAdminClient.mockReturnValue(supabase);
+
+    const result = await manualUnloadUnit("evt-1", "ee-1");
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/nada para desbipar/i);
+  });
+});
+
+describe("manualReturnUnit / manualUnreturnUnit", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.getCurrentAuthUser.mockResolvedValue({ id: "user-1" });
+  });
+
+  it("manualReturnUnit happy path: retorna uma unidade carregada", async () => {
+    const supabase = fakeSupabase({
+      event_equipment: [() => chain({ data: EE_ROW, error: null }), () => chain({ error: null })],
+      event_equipment_units: [
+        () => chain({ data: { id: "eeu-1" }, error: null }), // acha carregada-não-retornada
+        () => chain({ error: null }), // update returned_at
+        () => chain({ count: 1, error: null }), // sync count
+      ],
+    });
+    mocks.createSupabaseAdminClient.mockReturnValue(supabase);
+
+    const result = await manualReturnUnit("evt-1", "ee-1");
+    expect(result.ok).toBe(true);
+  });
+
+  it("manualUnreturnUnit happy path: desfaz um retorno", async () => {
+    const supabase = fakeSupabase({
+      event_equipment: [() => chain({ data: EE_ROW, error: null }), () => chain({ error: null })],
+      event_equipment_units: [
+        () => chain({ data: { id: "eeu-1" }, error: null }), // acha retornada
+        () => chain({ error: null }), // update returned_at=null
+        () => chain({ count: 0, error: null }), // sync count
+      ],
+    });
+    mocks.createSupabaseAdminClient.mockReturnValue(supabase);
+
+    const result = await manualUnreturnUnit("evt-1", "ee-1");
+    expect(result.ok).toBe(true);
+  });
+
+  it("manualReturnUnit rejeita quando não há unidade carregada", async () => {
+    const supabase = fakeSupabase({
+      event_equipment: [() => chain({ data: EE_ROW, error: null })],
+      event_equipment_units: [() => chain({ data: null, error: null })],
+    });
+    mocks.createSupabaseAdminClient.mockReturnValue(supabase);
+
+    const result = await manualReturnUnit("evt-1", "ee-1");
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/nenhuma unidade carregada/i);
   });
 });

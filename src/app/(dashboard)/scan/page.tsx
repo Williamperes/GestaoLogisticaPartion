@@ -11,6 +11,9 @@ interface ScanHubPageProps {
   searchParams: Promise<{ error?: string }>;
 }
 
+// Bipar é para quem opera em campo. Client/finance não têm o que fazer aqui.
+const SCAN_ROLES = ["super_admin", "admin", "operations", "warehouse"];
+
 const STATE_META: Record<
   ScanEventState,
   { label: string; tone: string; cta: string; href: (id: string) => string; icon: React.ComponentType<{ className?: string }> }
@@ -149,6 +152,7 @@ export default async function ScanHubPage({ searchParams }: ScanHubPageProps) {
   const { error } = await searchParams;
   const context = await getCurrentUserContext();
   if (!context) redirect("/login");
+  if (!context.role || !SCAN_ROLES.includes(context.role)) redirect("/dashboard");
   if (!context.primaryOrganization?.id) redirect("/dashboard");
 
   const member = await getTeamMemberByUserId(

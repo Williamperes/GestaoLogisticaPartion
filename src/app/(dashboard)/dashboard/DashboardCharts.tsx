@@ -12,16 +12,16 @@ import {
   Cell,
 } from "recharts";
 
-import type { CategoryStat } from "@/lib/dashboard";
-import { mockUtilizationChart } from "@/lib/mock-data";
+import type { CategoryStat, UtilizationPoint } from "@/lib/dashboard";
 
 const COLORS = ["#F59E0B", "#3B82F6", "#10B981", "#EF4444", "#8B5CF6", "#EC4899"];
 
 interface DashboardChartsProps {
   categoryStats: CategoryStat[];
+  utilizationHistory: UtilizationPoint[];
 }
 
-export function DashboardCharts({ categoryStats }: DashboardChartsProps) {
+export function DashboardCharts({ categoryStats, utilizationHistory }: DashboardChartsProps) {
   const total = categoryStats.reduce((s, c) => s + c.count, 0);
   const pieData = categoryStats.map((c) => ({
     name: c.name,
@@ -33,7 +33,7 @@ export function DashboardCharts({ categoryStats }: DashboardChartsProps) {
       <div className="xl:col-span-2 border border-border rounded-xl bg-card p-5">
         <h2 className="text-sm font-semibold text-foreground mb-4">Taxa de Utilização de Equipamentos</h2>
         <ResponsiveContainer width="100%" height={180}>
-          <AreaChart data={mockUtilizationChart}>
+          <AreaChart data={utilizationHistory}>
             <defs>
               <linearGradient id="utilGrad" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="5%" stopColor="#F59E0B" stopOpacity={0.25} />

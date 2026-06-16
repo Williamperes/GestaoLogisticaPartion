@@ -37,6 +37,8 @@ export interface EquipmentUnit {
   patrimony: string | null;
   status: EquipmentStatus;
   qrCode: string | null;
+  /** Data em que um QR próprio foi vinculado. NULL = token auto-gerado. */
+  qrLinkedAt: string | null;
   notes: string | null;
   createdAt: string;
 }
@@ -276,7 +278,7 @@ export async function getEquipmentById(id: string): Promise<EquipmentWithUnits |
         parent:parent_category_id (id, name)
       ),
       bulk_inventory (id, variant_id, unit, total_qty, available_qty),
-      equipment_units (id, variant_id, serial, patrimony, status, qr_code, notes, created_at),
+      equipment_units (id, variant_id, serial, patrimony, status, qr_code, qr_linked_at, notes, created_at),
       equipment_variants (id, label, sort_value, position, notes)
     `)
     .eq("id", id)
@@ -308,6 +310,7 @@ export async function getEquipmentById(id: string): Promise<EquipmentWithUnits |
       patrimony: string | null;
       status: string;
       qr_code: string | null;
+      qr_linked_at: string | null;
       notes: string | null;
       created_at: string;
     }[]) ?? [];
@@ -387,6 +390,7 @@ export async function getEquipmentById(id: string): Promise<EquipmentWithUnits |
       patrimony: u.patrimony,
       status: u.status as EquipmentStatus,
       qrCode: u.qr_code,
+      qrLinkedAt: u.qr_linked_at,
       notes: u.notes,
       createdAt: u.created_at,
     })),
