@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import { useFormStatus } from "react-dom";
-import { Building2, Mail, MapPin, Pencil, Phone, Trash2, UserRound, Users } from "lucide-react";
+import Link from "next/link";
+import { ArrowRight, Building2, Mail, MapPin, Pencil, Phone, Trash2, UserRound, Users } from "lucide-react";
 import { updateClient, deleteClient } from "@/app/(dashboard)/clients/actions";
 import type { ClientOrganization } from "@/lib/clients";
 import { formatPhoneNumber } from "@/lib/utils";
@@ -140,6 +141,14 @@ export function ClientCard({ client }: { client: ClientOrganization }) {
           <span>{client.city ?? "Cidade não informada"}</span>
         </div>
       </div>
+
+      <Link
+        href={`/clients/${client.id}`}
+        className="mt-4 inline-flex items-center gap-1.5 text-sm font-medium text-primary transition hover:gap-2.5"
+      >
+        Histórico &amp; faturamento
+        <ArrowRight className="h-4 w-4" />
+      </Link>
     </div>
   );
 }

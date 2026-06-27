@@ -119,6 +119,14 @@ vi.mock("@/lib/event-dates.server", () => ({
   listEventDates: vi.fn(async () => []),
 }));
 
+vi.mock("@/lib/equipmentTemplates", () => ({
+  listEquipmentTemplates: vi.fn(async () => []),
+}));
+
+vi.mock("@/app/(dashboard)/events/[id]/ApplyTemplateButton", () => ({
+  ApplyTemplateButton: () => null,
+}));
+
 vi.mock("@/lib/team", async (orig) => ({
   ...(await orig<typeof import("@/lib/team")>()),
   listTeamMembers: vi.fn(async () => []),
@@ -132,6 +140,7 @@ vi.mock("@/app/(dashboard)/events/actions", () => ({
   promoteToReadyToLoad: vi.fn(),
   removeEquipmentFromEvent: vi.fn(),
   toggleEquipmentSeparated: vi.fn(),
+  deleteEvent: vi.fn(),
 }));
 
 // Tabs: render ALL TabsContent eagerly (base-ui only mounts the active
@@ -266,7 +275,7 @@ describe("EventDetailPage (RSC)", () => {
     expect(screen.getByText(/Clique em "Liberar para Carga"/)).toBeInTheDocument();
   });
 
-  it("ready_to_load com equipamento populado: tabela, banner liberado, AddEquipmentSheet e Checkout", async () => {
+  it("ready_to_load com equipamento populado: tabela, banner liberado, AddEquipmentSheet e Bipar carregamento", async () => {
     const e = eventDetail();
     e.status = "ready_to_load";
     e.checklist = e.checklist.map((c) => ({ ...c, done: true }));
@@ -382,11 +391,11 @@ describe("EventDetailPage (RSC)", () => {
     expect(screen.getByText("12 un")).toBeInTheDocument();
     expect(screen.getByText(/Gate liberado/)).toBeInTheDocument();
     expect(screen.getByText("ADD_EQUIPMENT_SHEET")).toBeInTheDocument();
-    expect(screen.getByText(/Iniciar Checkout/)).toBeInTheDocument();
+    expect(screen.getByText(/Bipar carregamento/)).toBeInTheDocument();
     expect(screen.getByText(/Liberado para carga/)).toBeInTheDocument();
   });
 
-  it("in_field: links de Check-in de Retorno e Ver Checkout", async () => {
+  it("in_field: links de Bipar carregamento e Bipar retorno", async () => {
     const e = eventDetail();
     e.status = "in_field";
     e.checklist = e.checklist.map((c) => ({ ...c, done: true }));
@@ -419,9 +428,9 @@ describe("EventDetailPage (RSC)", () => {
     const { render, screen } = await import("@testing-library/react");
     render(ui);
     // in_field NÃO é editável (canEditEquipment exige ready_to_load) →
-    // sem AddEquipmentSheet, mas com Check-in e "Ver Checkout".
-    expect(screen.getByText(/Check-in de Retorno/)).toBeInTheDocument();
-    expect(screen.getByText(/Ver Checkout/)).toBeInTheDocument();
+    // sem AddEquipmentSheet, mas com os atalhos de scan no cabeçalho.
+    expect(screen.getByText(/Bipar carregamento/)).toBeInTheDocument();
+    expect(screen.getByText(/Bipar retorno/)).toBeInTheDocument();
     expect(screen.queryByText("ADD_EQUIPMENT_SHEET")).not.toBeInTheDocument();
     // equipamento desbloqueado + sem permissão de edição → texto de leitura.
     expect(screen.getByText("Projetor")).toBeInTheDocument();

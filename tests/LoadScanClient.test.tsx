@@ -37,15 +37,22 @@ vi.mock("sonner", () => ({
   toast: { success: (...a: unknown[]) => toastSuccess(...a), error: (...a: unknown[]) => toastError(...a) },
 }));
 
+const routerPush = vi.fn();
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: routerPush }),
+}));
+
 const scanLoadUnit = vi.fn(async () => ({ ok: true, eventEquipmentId: "e1" }));
 const unscanLoadUnit = vi.fn(async () => ({ ok: true, eventEquipmentId: "e1" }));
 const manualLoadUnit = vi.fn(async () => ({ ok: true }));
 const manualUnloadUnit = vi.fn(async () => ({ ok: true }));
+const finalizeLoad = vi.fn(async () => ({ ok: true }));
 vi.mock("@/app/(dashboard)/scan/actions", () => ({
   scanLoadUnit: (...a: unknown[]) => scanLoadUnit(...(a as [])),
   unscanLoadUnit: (...a: unknown[]) => unscanLoadUnit(...(a as [])),
   manualLoadUnit: (...a: unknown[]) => manualLoadUnit(...(a as [])),
   manualUnloadUnit: (...a: unknown[]) => manualUnloadUnit(...(a as [])),
+  finalizeLoad: (...a: unknown[]) => finalizeLoad(...(a as [])),
 }));
 
 import { LoadScanClient } from "@/app/(dashboard)/scan/load/[eventId]/LoadScanClient";
@@ -64,11 +71,12 @@ beforeEach(() => {
   unscanLoadUnit.mockResolvedValue({ ok: true, eventEquipmentId: "e1" });
   manualLoadUnit.mockResolvedValue({ ok: true });
   manualUnloadUnit.mockResolvedValue({ ok: true });
+  finalizeLoad.mockResolvedValue({ ok: true });
 });
 
 describe("LoadScanClient — render default", () => {
   it("mostra os modos, scanner, progresso e listas", () => {
-    render(<LoadScanClient eventId="ev1" initialItems={items} />);
+    render(<LoadScanClient eventId="ev1" eventStatus="ready_to_load" initialItems={items} />);
 
     expect(screen.getByRole("button", { name: "Bipar" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Desbipar" })).toBeInTheDocument();
@@ -85,14 +93,14 @@ describe("LoadScanClient — render default", () => {
   });
 
   it("mostra mensagem de vazio sem itens", () => {
-    render(<LoadScanClient eventId="ev1" initialItems={[]} />);
+    render(<LoadScanClient eventId="ev1" eventStatus="ready_to_load" initialItems={[]} />);
     expect(screen.getByText("Nenhum equipamento nesta OS.")).toBeInTheDocument();
   });
 });
 
 describe("LoadScanClient — scan", () => {
   it("ao escanear com sucesso no modo load incrementa e dá feedback", async () => {
-    render(<LoadScanClient eventId="ev1" initialItems={items} />);
+    render(<LoadScanClient eventId="ev1" eventStatus="ready_to_load" initialItems={items} />);
 
     await waitFor(() => expect(scannerOnResult).not.toBeNull());
     scannerOnResult?.("QR-SCAN");
@@ -106,7 +114,7 @@ describe("LoadScanClient — scan", () => {
 
   it("ao escanear com erro mostra toast de erro e feedback de erro", async () => {
     scanLoadUnit.mockResolvedValueOnce({ ok: false, error: "Inválido" });
-    render(<LoadScanClient eventId="ev1" initialItems={items} />);
+    render(<LoadScanClient eventId="ev1" eventStatus="ready_to_load" initialItems={items} />);
 
     await waitFor(() => expect(scannerOnResult).not.toBeNull());
     scannerOnResult?.("QR-X");
@@ -117,7 +125,7 @@ describe("LoadScanClient — scan", () => {
 
   it("no modo desbipar usa unscanLoadUnit", async () => {
     const user = userEvent.setup();
-    render(<LoadScanClient eventId="ev1" initialItems={items} />);
+    render(<LoadScanClient eventId="ev1" eventStatus="ready_to_load" initialItems={items} />);
 
     await user.click(screen.getByRole("button", { name: "Desbipar" }));
     await waitFor(() => expect(scannerOnResult).not.toBeNull());
@@ -131,7 +139,7 @@ describe("LoadScanClient — scan", () => {
 describe("LoadScanClient — manual counter", () => {
   it("o botão Bipar 1 chama manualLoadUnit e incrementa", async () => {
     const user = userEvent.setup();
-    render(<LoadScanClient eventId="ev1" initialItems={items} />);
+    render(<LoadScanClient eventId="ev1" eventStatus="ready_to_load" initialItems={items} />);
 
     const plus = screen.getAllByRole("button", { name: "Bipar 1" })[0];
     await user.click(plus);
@@ -142,7 +150,7 @@ describe("LoadScanClient — manual counter", () => {
 
   it("o botão Desbipar 1 chama manualUnloadUnit", async () => {
     const user = userEvent.setup();
-    render(<LoadScanClient eventId="ev1" initialItems={items} />);
+    render(<LoadScanClient eventId="ev1" eventStatus="ready_to_load" initialItems={items} />);
 
     const minus = screen.getAllByRole("button", { name: "Desbipar 1" })[0];
     await user.click(minus);
@@ -153,7 +161,7 @@ describe("LoadScanClient — manual counter", () => {
   it("erro no manual mostra toast e feedback de erro sem aplicar delta", async () => {
     const user = userEvent.setup();
     manualLoadUnit.mockResolvedValueOnce({ ok: false, error: "Sem estoque" });
-    render(<LoadScanClient eventId="ev1" initialItems={items} />);
+    render(<LoadScanClient eventId="ev1" eventStatus="ready_to_load" initialItems={items} />);
 
     const plus = screen.getAllByRole("button", { name: "Bipar 1" })[0];
     await user.click(plus);
@@ -165,10 +173,44 @@ describe("LoadScanClient — manual counter", () => {
   });
 });
 
+describe("LoadScanClient — finalizar carga", () => {
+  const allLoaded = [
+    { id: "e1", equipmentName: "Cabo XLR", variantLabel: null, qty: 2, loadedUnitsCount: 2 },
+  ];
+
+  it("ready_to_load: botão fecha a OS, navega e dá toast", async () => {
+    const user = userEvent.setup();
+    render(<LoadScanClient eventId="ev1" eventStatus="ready_to_load" initialItems={allLoaded} />);
+
+    await user.click(screen.getByRole("button", { name: /Fechar OS/ }));
+
+    await waitFor(() => expect(finalizeLoad).toHaveBeenCalledWith("ev1"));
+    await waitFor(() => expect(routerPush).toHaveBeenCalledWith("/events/ev1"));
+    expect(toastSuccess).toHaveBeenCalledWith("OS em campo. Carga concluída.");
+  });
+
+  it("in_field: indica que já está em campo, sem botão", () => {
+    render(<LoadScanClient eventId="ev1" eventStatus="in_field" initialItems={allLoaded} />);
+    expect(screen.getByText("OS já está em campo ✓")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Fechar OS/ })).not.toBeInTheDocument();
+  });
+
+  it("erro ao finalizar mostra toast e não navega", async () => {
+    finalizeLoad.mockResolvedValueOnce({ ok: false, error: "Falhou" });
+    const user = userEvent.setup();
+    render(<LoadScanClient eventId="ev1" eventStatus="ready_to_load" initialItems={allLoaded} />);
+
+    await user.click(screen.getByRole("button", { name: /Fechar OS/ }));
+
+    await waitFor(() => expect(toastError).toHaveBeenCalledWith("Falhou"));
+    expect(routerPush).not.toHaveBeenCalled();
+  });
+});
+
 describe("LoadScanClient — modo e erro de scanner", () => {
   it("alterna de volta para o modo Bipar", async () => {
     const user = userEvent.setup();
-    render(<LoadScanClient eventId="ev1" initialItems={items} />);
+    render(<LoadScanClient eventId="ev1" eventStatus="ready_to_load" initialItems={items} />);
 
     await user.click(screen.getByRole("button", { name: "Desbipar" }));
     await user.click(screen.getByRole("button", { name: "Bipar" }));
@@ -178,7 +220,7 @@ describe("LoadScanClient — modo e erro de scanner", () => {
   });
 
   it("propaga erro do scanner como toast de erro", async () => {
-    render(<LoadScanClient eventId="ev1" initialItems={items} />);
+    render(<LoadScanClient eventId="ev1" eventStatus="ready_to_load" initialItems={items} />);
     await waitFor(() => expect(scannerOnError).not.toBeNull());
     scannerOnError?.({ message: "Câmera negada" });
     expect(toastError).toHaveBeenCalledWith("Câmera negada");
@@ -189,7 +231,7 @@ describe("LoadScanClient — modo e erro de scanner", () => {
     manualLoadUnit.mockImplementationOnce(
       () => new Promise((res) => { resolveFirst = res; })
     );
-    render(<LoadScanClient eventId="ev1" initialItems={items} />);
+    render(<LoadScanClient eventId="ev1" eventStatus="ready_to_load" initialItems={items} />);
 
     const plus = screen.getAllByRole("button", { name: "Bipar 1" })[0];
     await act(async () => {

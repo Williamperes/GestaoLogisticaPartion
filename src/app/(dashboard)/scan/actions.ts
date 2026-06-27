@@ -80,6 +80,49 @@ async function syncReturnedState(supabase: AdminClient, eeId: string, qty: numbe
   return returnedCount;
 }
 
+// ── Defeito no retorno ───────────────────────────────────────────────────────
+// Uma unidade pode voltar danificada ou ser dada como perdida. Em ambos os
+// casos ela sai de circulação (status maintenance/inactive — excluído de
+// findAvailableUnitId e getEquipmentAvailability) e abre uma ocorrência na
+// fila de manutenção (equipment_maintenance).
+
+export type DefectCondition = "damaged" | "lost";
+
+async function recordUnitDefect(
+  supabase: AdminClient,
+  args: {
+    equipmentUnitId: string;
+    equipmentId: string;
+    organizationId: string;
+    eventId: string;
+    eventEquipmentId: string;
+    condition: DefectCondition;
+    note: string | null;
+    userId: string;
+  }
+) {
+  await supabase
+    .from("event_equipment_units")
+    .update({ return_condition: args.condition, defect_note: args.note })
+    .eq("event_equipment_id", args.eventEquipmentId)
+    .eq("equipment_unit_id", args.equipmentUnitId);
+
+  await supabase
+    .from("equipment_units")
+    .update({ status: args.condition === "lost" ? "inactive" : "maintenance" })
+    .eq("id", args.equipmentUnitId);
+
+  await supabase.from("equipment_maintenance").insert({
+    organization_id: args.organizationId,
+    equipment_id: args.equipmentId,
+    equipment_unit_id: args.equipmentUnitId,
+    event_id: args.eventId,
+    condition: args.condition,
+    note: args.note,
+    opened_by: args.userId,
+  });
+}
+
 // Localiza a linha event_equipment de uma OS para um equipamento/variante.
 async function findEeRow(
   supabase: AdminClient,
@@ -293,6 +336,66 @@ export async function unscanReturnUnit(eventId: string, qrCode: string): Promise
   return { ok: true, unitId: unit.id, equipmentId: unit.equipmentId, eventEquipmentId: eeRow.id };
 }
 
+// ── Finalização da OS pelo fluxo de scan ─────────────────────────────────────
+// O fluxo de scan é o canal principal de carga/retorno. Estas ações fazem a OS
+// avançar no ciclo de vida (o que libera estoque): a carga completa coloca a OS
+// "Em campo" e o retorno completo a "Conclui".
+
+export async function finalizeLoad(eventId: string): Promise<ScanResult> {
+  const user = await getCurrentAuthUser();
+  if (!user) return { ok: false, error: "Não autenticado" };
+
+  const supabase = createSupabaseAdminClient();
+  const { data: ev, error: evErr } = await supabase
+    .from("events")
+    .select("status")
+    .eq("id", eventId)
+    .maybeSingle();
+  if (evErr) return { ok: false, error: evErr.message };
+  if (!ev) return { ok: false, error: "OS não encontrada" };
+  if (ev.status === "in_field") return { ok: true };
+  if (ev.status !== "ready_to_load")
+    return { ok: false, error: "A OS precisa estar em 'Pronto p/ Carga' para sair em campo." };
+
+  const { error } = await supabase
+    .from("events")
+    .update({ status: "in_field" })
+    .eq("id", eventId);
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath(`/scan/load/${eventId}`);
+  revalidatePath(`/scan/return/${eventId}`);
+  revalidatePath(`/events/${eventId}`);
+  return { ok: true };
+}
+
+export async function finalizeReturn(eventId: string): Promise<ScanResult> {
+  const user = await getCurrentAuthUser();
+  if (!user) return { ok: false, error: "Não autenticado" };
+
+  const supabase = createSupabaseAdminClient();
+  const { data: ev, error: evErr } = await supabase
+    .from("events")
+    .select("status")
+    .eq("id", eventId)
+    .maybeSingle();
+  if (evErr) return { ok: false, error: evErr.message };
+  if (!ev) return { ok: false, error: "OS não encontrada" };
+  if (ev.status === "completed") return { ok: true };
+  if (ev.status !== "in_field")
+    return { ok: false, error: "Feche a carga (OS em campo) antes de concluir o retorno." };
+
+  const { error } = await supabase
+    .from("events")
+    .update({ status: "completed" })
+    .eq("id", eventId);
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath(`/scan/return/${eventId}`);
+  revalidatePath(`/events/${eventId}`);
+  return { ok: true };
+}
+
 // ── Marcação manual por linha (sem código) ──────────────────────────────────
 
 export async function manualLoadUnit(
@@ -406,6 +509,123 @@ export async function manualReturnUnit(
 
   revalidatePath(`/scan/return/${eventId}`);
   revalidatePath(`/events/${eventId}`);
+  return { ok: true, equipmentId: ee.equipment_id, eventEquipmentId: ee.id };
+}
+
+// ── Retorno com defeito ──────────────────────────────────────────────────────
+// Bipa a devolução e, no mesmo passo, marca a unidade como danificada/perdida:
+// ela volta retornada (libera a OS) mas sai de circulação e entra na fila de
+// manutenção. Sem QR (manual), pega a próxima unidade carregada e não retornada.
+
+export async function scanReturnDefectUnit(
+  eventId: string,
+  qrCode: string,
+  condition: DefectCondition,
+  note: string
+): Promise<ScanResult> {
+  const user = await getCurrentAuthUser();
+  if (!user) return { ok: false, error: "Não autenticado" };
+
+  const trimmed = qrCode.trim();
+  if (!trimmed) return { ok: false, error: "QR vazio" };
+
+  const unit = await getEquipmentUnitByQrCode(trimmed);
+  if (!unit) return { ok: false, error: "QR não encontrado" };
+
+  const supabase = createSupabaseAdminClient();
+  const { data: eeRow, error: eeErr } = await findEeRow(
+    supabase,
+    eventId,
+    unit.equipmentId,
+    unit.variantId
+  );
+  if (eeErr) return { ok: false, error: eeErr.message };
+  if (!eeRow) return { ok: false, error: "Este equipamento não está vinculado à OS" };
+
+  const { data: euRow, error: euErr } = await supabase
+    .from("event_equipment_units")
+    .update({ returned_at: new Date().toISOString(), returned_by: user.id })
+    .eq("event_equipment_id", eeRow.id)
+    .eq("equipment_unit_id", unit.id)
+    .not("loaded_at", "is", null)
+    .is("returned_at", null)
+    .select("id")
+    .maybeSingle();
+  if (euErr) return { ok: false, error: euErr.message };
+  if (!euRow) return { ok: false, error: "Unidade não carregada ou já retornada" };
+
+  await recordUnitDefect(supabase, {
+    equipmentUnitId: unit.id,
+    equipmentId: unit.equipmentId,
+    organizationId: unit.organizationId,
+    eventId,
+    eventEquipmentId: eeRow.id,
+    condition,
+    note: note.trim() || null,
+    userId: user.id,
+  });
+  await syncReturnedState(supabase, eeRow.id, eeRow.qty);
+
+  revalidatePath(`/scan/return/${eventId}`);
+  revalidatePath(`/events/${eventId}`);
+  revalidatePath("/maintenance");
+  return { ok: true, unitId: unit.id, equipmentId: unit.equipmentId, eventEquipmentId: eeRow.id };
+}
+
+export async function manualReturnDefectUnit(
+  eventId: string,
+  eventEquipmentId: string,
+  condition: DefectCondition,
+  note: string
+): Promise<ScanResult> {
+  const user = await getCurrentAuthUser();
+  if (!user) return { ok: false, error: "Não autenticado" };
+
+  const supabase = createSupabaseAdminClient();
+  const { data: ee, error: eeErr } = await getEeById(supabase, eventId, eventEquipmentId);
+  if (eeErr) return { ok: false, error: eeErr.message };
+  if (!ee) return { ok: false, error: "Equipamento não encontrado na OS" };
+
+  const { data: row } = await supabase
+    .from("event_equipment_units")
+    .select("id, equipment_unit_id")
+    .eq("event_equipment_id", ee.id)
+    .not("loaded_at", "is", null)
+    .is("returned_at", null)
+    .order("loaded_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  if (!row) return { ok: false, error: "Nenhuma unidade carregada para retornar." };
+
+  // organization_id da unidade para o registro de manutenção.
+  const { data: eq } = await supabase
+    .from("equipment")
+    .select("organization_id")
+    .eq("id", ee.equipment_id)
+    .maybeSingle();
+  if (!eq) return { ok: false, error: "Equipamento não encontrado." };
+
+  const { error: updErr } = await supabase
+    .from("event_equipment_units")
+    .update({ returned_at: new Date().toISOString(), returned_by: user.id })
+    .eq("id", row.id);
+  if (updErr) return { ok: false, error: updErr.message };
+
+  await recordUnitDefect(supabase, {
+    equipmentUnitId: row.equipment_unit_id,
+    equipmentId: ee.equipment_id,
+    organizationId: eq.organization_id,
+    eventId,
+    eventEquipmentId: ee.id,
+    condition,
+    note: note.trim() || null,
+    userId: user.id,
+  });
+  await syncReturnedState(supabase, ee.id, ee.qty);
+
+  revalidatePath(`/scan/return/${eventId}`);
+  revalidatePath(`/events/${eventId}`);
+  revalidatePath("/maintenance");
   return { ok: true, equipmentId: ee.equipment_id, eventEquipmentId: ee.id };
 }
 

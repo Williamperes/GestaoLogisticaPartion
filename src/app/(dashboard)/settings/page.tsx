@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { ListChecks, ChevronRight } from "lucide-react";
+import { ListChecks, ChevronRight, Boxes } from "lucide-react";
 
 import { getCurrentUserContext } from "@/lib/auth/session";
 
@@ -10,6 +10,12 @@ const SETTINGS_LINKS = [
     icon: ListChecks,
     label: "Templates de Checklist",
     description: "Defina os blocos estratégicos, comerciais e operacionais que cada OS precisa preencher.",
+  },
+  {
+    href: "/settings/equipment-templates",
+    icon: Boxes,
+    label: "Templates de Equipamento",
+    description: "Monte presets de equipamento por tipo de evento e gere a lista de uma OS com um clique.",
   },
 ];
 

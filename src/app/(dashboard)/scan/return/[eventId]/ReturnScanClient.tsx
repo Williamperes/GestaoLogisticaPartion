@@ -1,15 +1,21 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Check, Minus, Plus } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { AlertTriangle, Check, Flag, Minus, Plus } from "lucide-react";
 import { toast } from "sonner";
 
+import type { EventStatus } from "@/lib/events";
 import { scanFeedbackError, scanFeedbackSuccess } from "@/lib/scanFeedback";
 import {
+  finalizeReturn,
+  manualReturnDefectUnit,
   manualReturnUnit,
   manualUnreturnUnit,
+  scanReturnDefectUnit,
   scanReturnUnit,
   unscanReturnUnit,
+  type DefectCondition,
 } from "@/app/(dashboard)/scan/actions";
 
 import { QrScanner } from "@/components/inventory/QrScanner";
@@ -24,15 +30,23 @@ interface Item {
 
 interface ReturnScanClientProps {
   eventId: string;
+  eventStatus: EventStatus;
   initialItems: Item[];
 }
 
-type Mode = "return" | "unreturn";
+type Mode = "return" | "defect" | "unreturn";
 
-export function ReturnScanClient({ eventId, initialItems }: ReturnScanClientProps) {
+type DefectTarget = { kind: "scan"; qrCode: string } | { kind: "manual"; item: Item };
+
+export function ReturnScanClient({ eventId, eventStatus, initialItems }: ReturnScanClientProps) {
+  const router = useRouter();
   const [items, setItems] = useState(initialItems);
   const [mode, setMode] = useState<Mode>("return");
   const [busy, setBusy] = useState(false);
+  const [finalizing, setFinalizing] = useState(false);
+  const [defectTarget, setDefectTarget] = useState<DefectTarget | null>(null);
+  const [defectCondition, setDefectCondition] = useState<DefectCondition>("damaged");
+  const [defectNote, setDefectNote] = useState("");
 
   const { pending, done } = useMemo(() => {
     const pending: Item[] = [];
@@ -61,6 +75,10 @@ export function ReturnScanClient({ eventId, initialItems }: ReturnScanClientProp
   }
 
   async function handleScan(text: string) {
+    if (mode === "defect") {
+      setDefectTarget({ kind: "scan", qrCode: text });
+      return;
+    }
     const result =
       mode === "return"
         ? await scanReturnUnit(eventId, text)
@@ -73,6 +91,30 @@ export function ReturnScanClient({ eventId, initialItems }: ReturnScanClientProp
     scanFeedbackSuccess();
     if (result.eventEquipmentId) applyDelta(result.eventEquipmentId, mode === "return" ? 1 : -1);
     toast.success(mode === "return" ? `Retornado: ${text}` : `Removido: ${text}`);
+  }
+
+  async function submitDefect() {
+    if (!defectTarget || busy) return;
+    setBusy(true);
+    try {
+      const result =
+        defectTarget.kind === "scan"
+          ? await scanReturnDefectUnit(eventId, defectTarget.qrCode, defectCondition, defectNote)
+          : await manualReturnDefectUnit(eventId, defectTarget.item.id, defectCondition, defectNote);
+      if (!result.ok) {
+        scanFeedbackError();
+        toast.error(result.error ?? "Erro");
+        return;
+      }
+      scanFeedbackSuccess();
+      if (result.eventEquipmentId) applyDelta(result.eventEquipmentId, 1);
+      toast.success(defectCondition === "lost" ? "Marcado como perdido" : "Marcado como danificado");
+      setDefectTarget(null);
+      setDefectNote("");
+      setDefectCondition("damaged");
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function handleManual(item: Item, delta: 1 | -1) {
@@ -92,6 +134,22 @@ export function ReturnScanClient({ eventId, initialItems }: ReturnScanClientProp
       applyDelta(item.id, delta);
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function handleFinalize() {
+    if (finalizing) return;
+    setFinalizing(true);
+    try {
+      const result = await finalizeReturn(eventId);
+      if (!result.ok) {
+        toast.error(result.error ?? "Erro");
+        return;
+      }
+      toast.success("OS concluída. Estoque liberado.");
+      router.push(`/events/${eventId}`);
+    } finally {
+      setFinalizing(false);
     }
   }
 
@@ -125,7 +183,7 @@ export function ReturnScanClient({ eventId, initialItems }: ReturnScanClientProp
 
   return (
     <>
-      <div className="mb-3 grid grid-cols-2 gap-1 rounded-xl border border-border bg-card p-1">
+      <div className="mb-3 grid grid-cols-3 gap-1 rounded-xl border border-border bg-card p-1">
         <button
           type="button"
           onClick={() => setMode("return")}
@@ -134,6 +192,15 @@ export function ReturnScanClient({ eventId, initialItems }: ReturnScanClientProp
           }`}
         >
           Bipar
+        </button>
+        <button
+          type="button"
+          onClick={() => setMode("defect")}
+          className={`rounded-lg py-1.5 text-xs font-semibold transition ${
+            mode === "defect" ? "bg-amber-500/15 text-amber-700" : "text-muted-foreground"
+          }`}
+        >
+          Defeito
         </button>
         <button
           type="button"
@@ -146,10 +213,19 @@ export function ReturnScanClient({ eventId, initialItems }: ReturnScanClientProp
         </button>
       </div>
 
+      {mode === "defect" && (
+        <p className="mb-2 rounded-lg bg-amber-500/10 px-3 py-2 text-[11px] font-medium text-amber-700">
+          Bipe a unidade com defeito — você escolhe danificado ou perdido em seguida. O item sai de
+          circulação e vai para a fila de manutenção.
+        </p>
+      )}
+
       <div
         className={
           mode === "unreturn"
             ? "rounded-2xl ring-2 ring-red-500/40 ring-offset-2 ring-offset-background"
+            : mode === "defect"
+            ? "rounded-2xl ring-2 ring-amber-500/40 ring-offset-2 ring-offset-background"
             : ""
         }
       >
@@ -178,7 +254,18 @@ export function ReturnScanClient({ eventId, initialItems }: ReturnScanClientProp
                   {item.equipmentName}
                   {item.variantLabel ? ` · ${item.variantLabel}` : ""}
                 </span>
-                <Counter item={item} />
+                <div className="flex shrink-0 items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setDefectTarget({ kind: "manual", item })}
+                    aria-label="Marcar defeito"
+                    title="Marcar defeito"
+                    className="flex h-7 w-7 items-center justify-center rounded-lg border border-amber-500/30 bg-amber-500/5 text-amber-600 transition hover:bg-amber-500/15"
+                  >
+                    <AlertTriangle className="h-3.5 w-3.5" />
+                  </button>
+                  <Counter item={item} />
+                </div>
               </li>
             ))}
           </ul>
@@ -211,15 +298,102 @@ export function ReturnScanClient({ eventId, initialItems }: ReturnScanClientProp
       )}
 
       {pending.length === 0 && done.length > 0 && (
-        <p className="mt-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-center text-sm font-medium text-emerald-700">
-          Tudo retornado.
-        </p>
+        <div className="mt-3 space-y-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-center">
+          <p className="text-sm font-medium text-emerald-700">Tudo retornado.</p>
+          {eventStatus === "completed" ? (
+            <p className="text-xs font-medium text-muted-foreground">OS concluída ✓</p>
+          ) : (
+            <button
+              type="button"
+              onClick={handleFinalize}
+              disabled={finalizing || eventStatus !== "in_field"}
+              className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-50"
+            >
+              <Flag className="h-4 w-4" />
+              {finalizing
+                ? "Concluindo..."
+                : eventStatus === "in_field"
+                ? "Finalizar OS — Concluída"
+                : "Feche a carga (Em campo) primeiro"}
+            </button>
+          )}
+        </div>
       )}
 
       {items.length === 0 && (
         <p className="mt-3 rounded-xl border border-dashed border-border bg-card p-3 text-center text-sm text-muted-foreground">
           Nenhum equipamento carregado nesta OS.
         </p>
+      )}
+
+      {defectTarget && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 sm:items-center">
+          <div className="w-full max-w-sm rounded-2xl border border-border bg-card p-4 shadow-xl">
+            <div className="mb-3 flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4 text-amber-600" />
+              <h3 className="text-sm font-semibold">Registrar defeito</h3>
+            </div>
+            <p className="mb-3 text-xs text-muted-foreground">
+              {defectTarget.kind === "manual"
+                ? defectTarget.item.equipmentName
+                : `Unidade ${defectTarget.qrCode}`}
+            </p>
+
+            <div className="mb-3 grid grid-cols-2 gap-1 rounded-xl border border-border bg-background p-1">
+              <button
+                type="button"
+                onClick={() => setDefectCondition("damaged")}
+                className={`rounded-lg py-1.5 text-xs font-semibold transition ${
+                  defectCondition === "damaged"
+                    ? "bg-amber-500/15 text-amber-700"
+                    : "text-muted-foreground"
+                }`}
+              >
+                Danificado
+              </button>
+              <button
+                type="button"
+                onClick={() => setDefectCondition("lost")}
+                className={`rounded-lg py-1.5 text-xs font-semibold transition ${
+                  defectCondition === "lost" ? "bg-red-500/15 text-red-700" : "text-muted-foreground"
+                }`}
+              >
+                Perdido
+              </button>
+            </div>
+
+            <textarea
+              value={defectNote}
+              onChange={(e) => setDefectNote(e.target.value)}
+              placeholder="Observação (opcional): descreva o defeito…"
+              rows={3}
+              className="mb-3 w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-amber-500/50"
+            />
+
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setDefectTarget(null);
+                  setDefectNote("");
+                  setDefectCondition("damaged");
+                }}
+                disabled={busy}
+                className="flex-1 rounded-lg border border-border bg-background py-2 text-sm font-medium text-muted-foreground transition hover:text-foreground disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={submitDefect}
+                disabled={busy}
+                className="flex-1 rounded-lg bg-amber-600 py-2 text-sm font-semibold text-white transition hover:bg-amber-700 disabled:opacity-50"
+              >
+                {busy ? "Salvando..." : "Confirmar"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </>
   );

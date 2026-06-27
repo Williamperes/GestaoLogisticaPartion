@@ -41,7 +41,7 @@ export default async function ScanReturnPage({ params }: { params: Promise<{ eve
           Bipe cada equipamento ao devolver ao estoque.
         </p>
       </header>
-      <ReturnScanClient eventId={eventId} initialItems={items} />
+      <ReturnScanClient eventId={eventId} eventStatus={event.status} initialItems={items} />
     </>
   );
 }

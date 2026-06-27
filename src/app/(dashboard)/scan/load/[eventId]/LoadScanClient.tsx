@@ -1,11 +1,14 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Check, Minus, Plus } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Check, Minus, Plus, Truck } from "lucide-react";
 import { toast } from "sonner";
 
+import type { EventStatus } from "@/lib/events";
 import { scanFeedbackError, scanFeedbackSuccess } from "@/lib/scanFeedback";
 import {
+  finalizeLoad,
   manualLoadUnit,
   manualUnloadUnit,
   scanLoadUnit,
@@ -24,15 +27,18 @@ interface Item {
 
 interface LoadScanClientProps {
   eventId: string;
+  eventStatus: EventStatus;
   initialItems: Item[];
 }
 
 type Mode = "load" | "unload";
 
-export function LoadScanClient({ eventId, initialItems }: LoadScanClientProps) {
+export function LoadScanClient({ eventId, eventStatus, initialItems }: LoadScanClientProps) {
+  const router = useRouter();
   const [items, setItems] = useState(initialItems);
   const [mode, setMode] = useState<Mode>("load");
   const [busy, setBusy] = useState(false);
+  const [finalizing, setFinalizing] = useState(false);
 
   const { pending, done } = useMemo(() => {
     const pending: Item[] = [];
@@ -87,6 +93,22 @@ export function LoadScanClient({ eventId, initialItems }: LoadScanClientProps) {
       applyDelta(item.id, delta);
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function handleFinalize() {
+    if (finalizing) return;
+    setFinalizing(true);
+    try {
+      const result = await finalizeLoad(eventId);
+      if (!result.ok) {
+        toast.error(result.error ?? "Erro");
+        return;
+      }
+      toast.success("OS em campo. Carga concluída.");
+      router.push(`/events/${eventId}`);
+    } finally {
+      setFinalizing(false);
     }
   }
 
@@ -204,9 +226,26 @@ export function LoadScanClient({ eventId, initialItems }: LoadScanClientProps) {
       )}
 
       {pending.length === 0 && done.length > 0 && (
-        <p className="mt-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-center text-sm font-medium text-emerald-700">
-          Tudo carregado.
-        </p>
+        <div className="mt-3 space-y-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-center">
+          <p className="text-sm font-medium text-emerald-700">Tudo carregado.</p>
+          {eventStatus === "in_field" ? (
+            <p className="text-xs font-medium text-amber-600">OS já está em campo ✓</p>
+          ) : (
+            <button
+              type="button"
+              onClick={handleFinalize}
+              disabled={finalizing || eventStatus !== "ready_to_load"}
+              className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-amber-500 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-amber-600 disabled:opacity-50"
+            >
+              <Truck className="h-4 w-4" />
+              {finalizing
+                ? "Fechando..."
+                : eventStatus === "ready_to_load"
+                ? "Fechar OS — colocar Em Campo"
+                : "Libere a carga na OS primeiro"}
+            </button>
+          )}
+        </div>
       )}
 
       {items.length === 0 && (

@@ -22,6 +22,8 @@ vi.mock("@/lib/auth/session", () => ({
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
 import {
+  finalizeLoad,
+  finalizeReturn,
   manualLoadUnit,
   manualReturnUnit,
   manualUnloadUnit,

@@ -1,6 +1,6 @@
 "use client";
 
-import { Search, Bell, ChevronRight } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { MobileSidebar } from "@/components/layout/Sidebar";
 import type { AppRole } from "@/lib/auth/roles";
@@ -11,8 +11,6 @@ const routeLabels: Record<string, string> = {
   "/inventory": "Inventário",
   "/clients": "Clientes",
   "/team": "Equipe",
-  "/checkout": "Checkout",
-  "/checkin": "Check-in",
 };
 
 export function TopBar({
@@ -55,17 +53,6 @@ export function TopBar({
           </span>
         ))}
       </nav>
-
-      <div className="hidden items-center gap-2 rounded-lg border border-border bg-black/5 px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-black/8 md:flex md:w-44 lg:w-52">
-        <Search className="w-3.5 h-3.5 shrink-0" />
-        <span className="flex-1 truncate">Buscar...</span>
-        <kbd className="text-[10px] border border-border rounded px-1 py-0.5 font-mono">⌘K</kbd>
-      </div>
-
-      <button className="relative flex h-8 w-8 items-center justify-center rounded-lg transition-colors hover:bg-black/5">
-        <Bell className="w-4 h-4 text-foreground/70" />
-        <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full bg-amber-400" />
-      </button>
     </header>
   );
 }

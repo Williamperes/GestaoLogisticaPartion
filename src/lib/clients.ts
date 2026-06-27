@@ -90,6 +90,107 @@ export async function listClientOrganizations(search?: string) {
   ) satisfies ClientOrganization[];
 }
 
+export type InvoiceStatus = "draft" | "sent" | "paid";
+
+export interface ClientEvent {
+  id: string;
+  name: string;
+  status: string;
+  startDate: string;
+  endDate: string;
+  valueCents: number | null;
+  invoiceStatus: InvoiceStatus;
+}
+
+export interface ClientBillingSummary {
+  eventCount: number;
+  totalCents: number;
+  paidCents: number;
+  pendingCents: number;
+}
+
+export async function getClientById(id: string): Promise<ClientOrganization | null> {
+  const supabase = createSupabaseAdminClient();
+  const { data, error } = await supabase
+    .from("organizations")
+    .select(
+      "id, name, slug, contact_name, contact_email, contact_phone, address, city, is_active, created_at"
+    )
+    .eq("id", id)
+    .eq("type", "client")
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+  return {
+    id: data.id,
+    name: data.name,
+    slug: data.slug,
+    contactName: data.contact_name,
+    contactEmail: data.contact_email,
+    contactPhone: data.contact_phone,
+    address: data.address,
+    city: data.city,
+    isActive: data.is_active,
+    createdAt: data.created_at,
+  };
+}
+
+/** Histórico de OS de um cliente, mais recente primeiro. */
+export async function listClientEvents(clientOrganizationId: string): Promise<ClientEvent[]> {
+  const supabase = createSupabaseAdminClient();
+  const { data, error } = await supabase
+    .from("events")
+    .select("id, name, status, start_date, end_date, value_cents, invoice_status")
+    .eq("client_organization_id", clientOrganizationId)
+    .order("start_date", { ascending: false });
+  if (error) throw error;
+
+  type Row = {
+    id: string;
+    name: string;
+    status: string;
+    start_date: string;
+    end_date: string;
+    value_cents: number | null;
+    invoice_status: InvoiceStatus;
+  };
+
+  return ((data as unknown as Row[]) ?? []).map((r) => ({
+    id: r.id,
+    name: r.name,
+    status: r.status,
+    startDate: r.start_date,
+    endDate: r.end_date,
+    valueCents: r.value_cents,
+    invoiceStatus: r.invoice_status,
+  }));
+}
+
+export function summarizeClientBilling(events: ClientEvent[]): ClientBillingSummary {
+  let totalCents = 0;
+  let paidCents = 0;
+  for (const e of events) {
+    const value = e.valueCents ?? 0;
+    totalCents += value;
+    if (e.invoiceStatus === "paid") paidCents += value;
+  }
+  return {
+    eventCount: events.length,
+    totalCents,
+    paidCents,
+    pendingCents: totalCents - paidCents,
+  };
+}
+
+export function formatInvoiceStatus(status: InvoiceStatus): string {
+  const map: Record<InvoiceStatus, string> = {
+    draft: "Rascunho",
+    sent: "Enviada",
+    paid: "Paga",
+  };
+  return map[status];
+}
+
 export function slugifyOrganizationName(value: string) {
   return value
     .normalize("NFD")

@@ -40,7 +40,7 @@ export default async function ScanLoadPage({ params }: { params: Promise<{ event
         </p>
       </header>
 
-      <LoadScanClient eventId={eventId} initialItems={items} />
+      <LoadScanClient eventId={eventId} eventStatus={event.status} initialItems={items} />
     </>
   );
 }

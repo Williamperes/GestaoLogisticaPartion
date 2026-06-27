@@ -31,6 +31,15 @@ async function requireChecklistRole() {
 // createEvent
 // Cria evento e insere o checklist padrão automaticamente.
 // ──────────────────────────────────────────────────────────────────
+// Converte "1.234,56" / "1234.56" / "1234,56" em centavos. Vazio → null.
+function parseEventValueToCents(raw: string): number | null {
+  const cleaned = raw.replace(/[^\d.,]/g, "").replace(/\./g, "").replace(",", ".");
+  if (!cleaned) return null;
+  const value = Number(cleaned);
+  if (Number.isNaN(value)) return null;
+  return Math.round(value * 100);
+}
+
 export async function createEvent(formData: FormData) {
   const context = await requireWriteRole();
 
@@ -55,6 +64,7 @@ export async function createEvent(formData: FormData) {
   const teardownAt = String(formData.get("teardownAt") ?? "").trim() || null;
   const agencyName = String(formData.get("agencyName") ?? "").trim() || null;
   const notes = String(formData.get("notes") ?? "").trim() || null;
+  const valueCents = parseEventValueToCents(String(formData.get("value") ?? "").trim());
   const executivePresent = formData.get("executivePresent") === "on";
   const isRecorded = formData.get("isRecorded") === "on";
   const isLivestreamed = formData.get("isLivestreamed") === "on";
@@ -120,6 +130,7 @@ export async function createEvent(formData: FormData) {
       teardown_at: teardownAt,
       agency_name: agencyName,
       notes,
+      value_cents: valueCents,
       executive_present: executivePresent,
       is_recorded: isRecorded,
       is_livestreamed: isLivestreamed,
@@ -161,6 +172,49 @@ export async function createEvent(formData: FormData) {
 
   revalidatePath("/events");
   redirect(`/events/${event.id}?success=Evento%20criado.`);
+}
+
+// ──────────────────────────────────────────────────────────────────
+// deleteEvent
+// Exclui a OS por completo (cascata: checklist, datas, escala, palestrantes,
+// extras, equipamentos/unidades). Restrito a admin. Bloqueado se a OS está
+// "Em campo" — equipamento fora; conclua o retorno antes.
+// ──────────────────────────────────────────────────────────────────
+export async function deleteEvent(formData: FormData) {
+  const context = await getCurrentUserContext();
+  if (!context?.role || !["super_admin", "admin"].includes(context.role)) {
+    redirect("/dashboard?error=unauthorized");
+  }
+  const organizationId = context.primaryOrganization?.id;
+  if (!organizationId) redirect("/dashboard?error=organization_not_found");
+
+  const eventId = String(formData.get("id") ?? "").trim();
+  if (!eventId) redirect("/events?error=OS inválida.");
+
+  const supabase = createSupabaseAdminClient();
+  const { data: ev } = await supabase
+    .from("events")
+    .select("organization_id, status")
+    .eq("id", eventId)
+    .maybeSingle();
+  if (!ev || ev.organization_id !== organizationId) {
+    redirect("/events?error=OS não encontrada.");
+  }
+  if (ev.status === "in_field") {
+    redirect(
+      `/events/${eventId}?error=${encodeURIComponent(
+        "Não é possível excluir uma OS em campo. Conclua o retorno primeiro."
+      )}`
+    );
+  }
+
+  const { error } = await supabase.from("events").delete().eq("id", eventId);
+  if (error) {
+    redirect(`/events/${eventId}?error=${encodeURIComponent(error.message)}`);
+  }
+
+  revalidatePath("/events");
+  redirect(`/events?success=${encodeURIComponent("OS excluída.")}`);
 }
 
 // ──────────────────────────────────────────────────────────────────
@@ -351,6 +405,112 @@ export async function addEquipmentToEvent(formData: FormData) {
   }
 
   revalidatePath(`/events/${eventId}`);
+}
+
+// ──────────────────────────────────────────────────────────────────
+// applyEquipmentTemplate
+// Popula event_equipment a partir de um template de equipamento. Linhas
+// já presentes (mesmo equipment+variant, sem unit_id) têm a qty somada;
+// as ausentes são inseridas. Base da "geração automática de OS".
+// ──────────────────────────────────────────────────────────────────
+export async function applyEquipmentTemplate(formData: FormData) {
+  await requireWriteRole();
+
+  const eventId = String(formData.get("eventId") ?? "").trim();
+  const templateId = String(formData.get("templateId") ?? "").trim();
+  if (!eventId || !templateId) {
+    redirect(`/events/${eventId}?error=Selecione um template.`);
+  }
+
+  const supabase = createSupabaseAdminClient();
+
+  const { data: items, error: itemsErr } = await supabase
+    .from("equipment_template_items")
+    .select("equipment_id, variant_id, qty")
+    .eq("template_id", templateId);
+  if (itemsErr) {
+    redirect(`/events/${eventId}?error=${encodeURIComponent(itemsErr.message)}`);
+  }
+  if (!items || items.length === 0) {
+    redirect(`/events/${eventId}?error=Template%20sem%20itens.`);
+  }
+
+  // Linhas existentes (estilo lote: unit_id IS NULL) para somar quantidades.
+  const { data: existing, error: existErr } = await supabase
+    .from("event_equipment")
+    .select("id, equipment_id, variant_id, qty")
+    .eq("event_id", eventId)
+    .is("unit_id", null);
+  if (existErr) {
+    redirect(`/events/${eventId}?error=${encodeURIComponent(existErr.message)}`);
+  }
+
+  const existingMap = new Map(
+    (existing ?? []).map((r) => [availabilityKey(r.equipment_id, r.variant_id ?? null), r])
+  );
+
+  // Disponibilidade efetiva por (equipment, variant) nas datas da OS,
+  // ignorando o que esta própria OS já reserva (excludeEventId).
+  const { data: ev } = await supabase
+    .from("events")
+    .select("organization_id")
+    .eq("id", eventId)
+    .maybeSingle();
+  const { data: dateRows } = await supabase
+    .from("event_dates")
+    .select("date")
+    .eq("event_id", eventId);
+  const dates = (dateRows ?? []).map((d) => d.date as string);
+  const availability = ev
+    ? await getEquipmentAvailability(ev.organization_id, dates, eventId)
+    : new Map();
+
+  // Nomes para a mensagem de aviso.
+  const ids = Array.from(new Set((items ?? []).map((i) => i.equipment_id)));
+  const { data: names } = await supabase.from("equipment").select("id, name").in("id", ids);
+  const nameMap = new Map((names ?? []).map((n) => [n.id, n.name as string]));
+
+  const inserts: { event_id: string; equipment_id: string; variant_id: string | null; qty: number; loaded: boolean }[] =
+    [];
+  const shortages: string[] = [];
+  for (const item of items ?? []) {
+    const vid = item.variant_id ?? null;
+    const k = availabilityKey(item.equipment_id, vid);
+    const found = existingMap.get(k);
+    const finalQty = (found?.qty ?? 0) + item.qty;
+    const available = (availability.get(k) as { available: number } | undefined)?.available ?? 0;
+    if (finalQty > available) {
+      shortages.push(`${nameMap.get(item.equipment_id) ?? "Item"} (precisa ${finalQty}, há ${available})`);
+    }
+    if (found) {
+      await supabase
+        .from("event_equipment")
+        .update({ qty: finalQty })
+        .eq("id", found.id);
+    } else {
+      inserts.push({
+        event_id: eventId,
+        equipment_id: item.equipment_id,
+        variant_id: vid,
+        qty: item.qty,
+        loaded: false,
+      });
+    }
+  }
+
+  if (inserts.length > 0) {
+    const { error: insErr } = await supabase.from("event_equipment").insert(inserts);
+    if (insErr) {
+      redirect(`/events/${eventId}?error=${encodeURIComponent(insErr.message)}`);
+    }
+  }
+
+  revalidatePath(`/events/${eventId}`);
+  const msg =
+    shortages.length > 0
+      ? `Lista gerada, mas estoque insuficiente: ${shortages.join("; ")}.`
+      : "Lista de equipamentos gerada.";
+  redirect(`/events/${eventId}?success=${encodeURIComponent(msg)}`);
 }
 
 // ──────────────────────────────────────────────────────────────────
@@ -649,6 +809,11 @@ export async function updateEventDetails(formData: FormData) {
   const teardownAt = String(formData.get("teardownAt") ?? "").trim() || null;
   const agencyName = String(formData.get("agencyName") ?? "").trim() || null;
   const notes = String(formData.get("notes") ?? "").trim() || null;
+  const valueCents = parseEventValueToCents(String(formData.get("value") ?? "").trim());
+  const invoiceStatusRaw = String(formData.get("invoiceStatus") ?? "").trim();
+  const invoiceStatus = ["draft", "sent", "paid"].includes(invoiceStatusRaw)
+    ? invoiceStatusRaw
+    : "draft";
   const executivePresent = formData.get("executivePresent") === "on";
   const isRecorded = formData.get("isRecorded") === "on";
   const isLivestreamed = formData.get("isLivestreamed") === "on";
@@ -690,6 +855,8 @@ export async function updateEventDetails(formData: FormData) {
       teardown_at: teardownAt,
       agency_name: agencyName,
       notes,
+      value_cents: valueCents,
+      invoice_status: invoiceStatus,
       executive_present: executivePresent,
       is_recorded: isRecorded,
       is_livestreamed: isLivestreamed,

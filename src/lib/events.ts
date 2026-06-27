@@ -78,6 +78,9 @@ export interface Event {
   teardownAt: string | null;
   agencyName: string | null;
   notes: string | null;
+  // Faturamento — populado por getEventById (detalhe); ausente no resumo de lista.
+  valueCents?: number | null;
+  invoiceStatus?: "draft" | "sent" | "paid";
   executivePresent: boolean;
   isRecorded: boolean;
   isLivestreamed: boolean;
@@ -292,6 +295,7 @@ export async function getEventById(id: string): Promise<EventDetail | null> {
       id, organization_id, client_organization_id, name, venue, city,
       venue_notes, start_date, end_date, status, created_at,
       vehicle, lighting_color, assembly_at, teardown_at, agency_name, notes,
+      value_cents, invoice_status,
       executive_present, is_recorded, is_livestreamed, client_demanding,
       agency_detailed, previous_day_assembly, requires_advance_credential,
       strict_venue_hours,
@@ -381,6 +385,8 @@ export async function getEventById(id: string): Promise<EventDetail | null> {
     teardownAt: data.teardown_at,
     agencyName: data.agency_name,
     notes: data.notes,
+    valueCents: data.value_cents ?? null,
+    invoiceStatus: (data.invoice_status ?? "draft") as "draft" | "sent" | "paid",
     executivePresent: data.executive_present,
     isRecorded: data.is_recorded,
     isLivestreamed: data.is_livestreamed,

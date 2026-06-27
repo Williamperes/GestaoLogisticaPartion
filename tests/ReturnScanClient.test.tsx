@@ -36,15 +36,22 @@ vi.mock("sonner", () => ({
   toast: { success: (...a: unknown[]) => toastSuccess(...a), error: (...a: unknown[]) => toastError(...a) },
 }));
 
+const routerPush = vi.fn();
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: routerPush }),
+}));
+
 const scanReturnUnit = vi.fn(async () => ({ ok: true, eventEquipmentId: "e1" }));
 const unscanReturnUnit = vi.fn(async () => ({ ok: true, eventEquipmentId: "e1" }));
 const manualReturnUnit = vi.fn(async () => ({ ok: true }));
 const manualUnreturnUnit = vi.fn(async () => ({ ok: true }));
+const finalizeReturn = vi.fn(async () => ({ ok: true }));
 vi.mock("@/app/(dashboard)/scan/actions", () => ({
   scanReturnUnit: (...a: unknown[]) => scanReturnUnit(...(a as [])),
   unscanReturnUnit: (...a: unknown[]) => unscanReturnUnit(...(a as [])),
   manualReturnUnit: (...a: unknown[]) => manualReturnUnit(...(a as [])),
   manualUnreturnUnit: (...a: unknown[]) => manualUnreturnUnit(...(a as [])),
+  finalizeReturn: (...a: unknown[]) => finalizeReturn(...(a as [])),
 }));
 
 import { ReturnScanClient } from "@/app/(dashboard)/scan/return/[eventId]/ReturnScanClient";
@@ -63,11 +70,12 @@ beforeEach(() => {
   unscanReturnUnit.mockResolvedValue({ ok: true, eventEquipmentId: "e1" });
   manualReturnUnit.mockResolvedValue({ ok: true });
   manualUnreturnUnit.mockResolvedValue({ ok: true });
+  finalizeReturn.mockResolvedValue({ ok: true });
 });
 
 describe("ReturnScanClient — render default", () => {
   it("mostra modos, scanner, progresso e listas", () => {
-    render(<ReturnScanClient eventId="ev1" initialItems={items} />);
+    render(<ReturnScanClient eventId="ev1" eventStatus="in_field" initialItems={items} />);
 
     expect(screen.getByRole("button", { name: "Bipar" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Desbipar" })).toBeInTheDocument();
@@ -83,14 +91,14 @@ describe("ReturnScanClient — render default", () => {
   });
 
   it("mostra mensagem de vazio sem itens", () => {
-    render(<ReturnScanClient eventId="ev1" initialItems={[]} />);
+    render(<ReturnScanClient eventId="ev1" eventStatus="in_field" initialItems={[]} />);
     expect(screen.getByText("Nenhum equipamento carregado nesta OS.")).toBeInTheDocument();
   });
 });
 
 describe("ReturnScanClient — scan", () => {
   it("ao escanear com sucesso no modo return incrementa e dá feedback", async () => {
-    render(<ReturnScanClient eventId="ev1" initialItems={items} />);
+    render(<ReturnScanClient eventId="ev1" eventStatus="in_field" initialItems={items} />);
 
     await waitFor(() => expect(scannerOnResult).not.toBeNull());
     scannerOnResult?.("QR-SCAN");
@@ -104,7 +112,7 @@ describe("ReturnScanClient — scan", () => {
 
   it("ao escanear com erro mostra toast e feedback de erro", async () => {
     scanReturnUnit.mockResolvedValueOnce({ ok: false, error: "Inválido" });
-    render(<ReturnScanClient eventId="ev1" initialItems={items} />);
+    render(<ReturnScanClient eventId="ev1" eventStatus="in_field" initialItems={items} />);
 
     await waitFor(() => expect(scannerOnResult).not.toBeNull());
     scannerOnResult?.("QR-X");
@@ -115,7 +123,7 @@ describe("ReturnScanClient — scan", () => {
 
   it("no modo desbipar usa unscanReturnUnit", async () => {
     const user = userEvent.setup();
-    render(<ReturnScanClient eventId="ev1" initialItems={items} />);
+    render(<ReturnScanClient eventId="ev1" eventStatus="in_field" initialItems={items} />);
 
     await user.click(screen.getByRole("button", { name: "Desbipar" }));
     await waitFor(() => expect(scannerOnResult).not.toBeNull());
@@ -129,7 +137,7 @@ describe("ReturnScanClient — scan", () => {
 describe("ReturnScanClient — manual counter", () => {
   it("o botão Bipar 1 chama manualReturnUnit e incrementa", async () => {
     const user = userEvent.setup();
-    render(<ReturnScanClient eventId="ev1" initialItems={items} />);
+    render(<ReturnScanClient eventId="ev1" eventStatus="in_field" initialItems={items} />);
 
     const plus = screen.getAllByRole("button", { name: "Bipar 1" })[0];
     await user.click(plus);
@@ -140,7 +148,7 @@ describe("ReturnScanClient — manual counter", () => {
 
   it("o botão Desbipar 1 chama manualUnreturnUnit", async () => {
     const user = userEvent.setup();
-    render(<ReturnScanClient eventId="ev1" initialItems={items} />);
+    render(<ReturnScanClient eventId="ev1" eventStatus="in_field" initialItems={items} />);
 
     const minus = screen.getAllByRole("button", { name: "Desbipar 1" })[0];
     await user.click(minus);
@@ -151,7 +159,7 @@ describe("ReturnScanClient — manual counter", () => {
   it("erro no manual mostra toast e feedback de erro sem aplicar delta", async () => {
     const user = userEvent.setup();
     manualReturnUnit.mockResolvedValueOnce({ ok: false, error: "Falha" });
-    render(<ReturnScanClient eventId="ev1" initialItems={items} />);
+    render(<ReturnScanClient eventId="ev1" eventStatus="in_field" initialItems={items} />);
 
     const plus = screen.getAllByRole("button", { name: "Bipar 1" })[0];
     await user.click(plus);
@@ -165,7 +173,7 @@ describe("ReturnScanClient — manual counter", () => {
 describe("ReturnScanClient — modo e erro de scanner", () => {
   it("alterna de volta para o modo Bipar (return)", async () => {
     const user = userEvent.setup();
-    render(<ReturnScanClient eventId="ev1" initialItems={items} />);
+    render(<ReturnScanClient eventId="ev1" eventStatus="in_field" initialItems={items} />);
 
     await user.click(screen.getByRole("button", { name: "Desbipar" }));
     await user.click(screen.getByRole("button", { name: "Bipar" }));
@@ -175,7 +183,7 @@ describe("ReturnScanClient — modo e erro de scanner", () => {
   });
 
   it("propaga erro do scanner como toast de erro", async () => {
-    render(<ReturnScanClient eventId="ev1" initialItems={items} />);
+    render(<ReturnScanClient eventId="ev1" eventStatus="in_field" initialItems={items} />);
     await waitFor(() => expect(scannerOnError).not.toBeNull());
     scannerOnError?.({ message: "Sem câmera" });
     expect(toastError).toHaveBeenCalledWith("Sem câmera");
@@ -186,7 +194,7 @@ describe("ReturnScanClient — modo e erro de scanner", () => {
     manualReturnUnit.mockImplementationOnce(
       () => new Promise((res) => { resolveFirst = res; })
     );
-    render(<ReturnScanClient eventId="ev1" initialItems={items} />);
+    render(<ReturnScanClient eventId="ev1" eventStatus="in_field" initialItems={items} />);
 
     const plus = screen.getAllByRole("button", { name: "Bipar 1" })[0];
     await act(async () => {
@@ -202,5 +210,45 @@ describe("ReturnScanClient — modo e erro de scanner", () => {
       resolveFirst({ ok: true });
     });
     await waitFor(() => expect(scanFeedbackSuccess).toHaveBeenCalled());
+  });
+});
+
+describe("ReturnScanClient — finalizar OS", () => {
+  const allReturned = [
+    { id: "e1", equipmentName: "Cabo XLR", variantLabel: null, loadedUnitsCount: 2, returnedUnitsCount: 2 },
+  ];
+
+  it("in_field: botão conclui a OS, navega e dá toast", async () => {
+    const user = userEvent.setup();
+    render(<ReturnScanClient eventId="ev1" eventStatus="in_field" initialItems={allReturned} />);
+
+    await user.click(screen.getByRole("button", { name: /Finalizar OS/ }));
+
+    await waitFor(() => expect(finalizeReturn).toHaveBeenCalledWith("ev1"));
+    await waitFor(() => expect(routerPush).toHaveBeenCalledWith("/events/ev1"));
+    expect(toastSuccess).toHaveBeenCalledWith("OS concluída. Estoque liberado.");
+  });
+
+  it("ready_to_load: botão desabilitado pedindo fechar a carga antes", () => {
+    render(<ReturnScanClient eventId="ev1" eventStatus="ready_to_load" initialItems={allReturned} />);
+    const btn = screen.getByRole("button", { name: /Feche a carga/ });
+    expect(btn).toBeDisabled();
+  });
+
+  it("completed: indica OS concluída, sem botão", () => {
+    render(<ReturnScanClient eventId="ev1" eventStatus="completed" initialItems={allReturned} />);
+    expect(screen.getByText("OS concluída ✓")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Finalizar OS/ })).not.toBeInTheDocument();
+  });
+
+  it("erro ao finalizar mostra toast e não navega", async () => {
+    finalizeReturn.mockResolvedValueOnce({ ok: false, error: "Falhou" });
+    const user = userEvent.setup();
+    render(<ReturnScanClient eventId="ev1" eventStatus="in_field" initialItems={allReturned} />);
+
+    await user.click(screen.getByRole("button", { name: /Finalizar OS/ }));
+
+    await waitFor(() => expect(toastError).toHaveBeenCalledWith("Falhou"));
+    expect(routerPush).not.toHaveBeenCalled();
   });
 });

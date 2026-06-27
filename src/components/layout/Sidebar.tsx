@@ -15,12 +15,12 @@ import {
   LogOut,
   ChevronLeft,
   ChevronRight,
-  Bell,
   Settings,
   Menu,
   ScanLine,
+  Wrench,
+  Handshake,
 } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { signOut } from "@/app/(auth)/actions";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
@@ -33,7 +33,6 @@ interface NavItem {
   href: string;
   icon: React.ComponentType<{ className?: string }>;
   label: string;
-  badge?: number;
   roles: readonly NavRole[];
 }
 
@@ -47,6 +46,7 @@ const NON_WAREHOUSE: readonly NavRole[] = ["super_admin", "admin", "operations",
 const ADMIN_OPS: readonly NavRole[] = ["super_admin", "admin", "operations"];
 const ADMIN_ONLY: readonly NavRole[] = ["super_admin", "admin"];
 const WAREHOUSE_ONLY: readonly NavRole[] = ["warehouse"];
+const OPS_WAREHOUSE: readonly NavRole[] = ["super_admin", "admin", "operations", "warehouse"];
 
 const navGroups: readonly NavGroup[] = [
   {
@@ -54,8 +54,9 @@ const navGroups: readonly NavGroup[] = [
     items: [
       { href: "/scan", icon: ScanLine, label: "Bipar OS", roles: WAREHOUSE_ONLY },
       { href: "/dashboard", icon: LayoutDashboard, label: "Dashboard", roles: NON_WAREHOUSE },
-      { href: "/events", icon: CalendarDays, label: "Eventos & OS", badge: 3, roles: NON_WAREHOUSE },
+      { href: "/events", icon: CalendarDays, label: "Eventos & OS", roles: NON_WAREHOUSE },
       { href: "/inventory", icon: Package, label: "Inventário", roles: ADMIN_OPS },
+      { href: "/maintenance", icon: Wrench, label: "Manutenção", roles: OPS_WAREHOUSE },
     ],
   },
   {
@@ -63,6 +64,7 @@ const navGroups: readonly NavGroup[] = [
     items: [
       { href: "/clients", icon: Users, label: "Clientes", roles: ADMIN_OPS },
       { href: "/team", icon: UserRound, label: "Equipe", roles: ADMIN_OPS },
+      { href: "/subrentals", icon: Handshake, label: "Sublocações", roles: NON_WAREHOUSE },
     ],
   },
 ];
@@ -194,11 +196,6 @@ function SidebarContent({
                             </motion.span>
                           )}
                         </AnimatePresence>
-                        {!collapsed && item.badge && (
-                          <Badge className="ml-auto h-4 min-w-[18px] text-[10px] px-1 bg-amber-500/20 text-amber-600 border-0 font-semibold">
-                            {item.badge}
-                          </Badge>
-                        )}
                       </TooltipTrigger>
                       {!mobile && collapsed && (
                         <TooltipContent side="right" className="text-xs">
@@ -215,24 +212,6 @@ function SidebarContent({
       </nav>
 
       <div className="px-2 pb-4 space-y-0.5">
-        <Tooltip>
-          <TooltipTrigger
-            render={(props) => (
-              <Link href="#" {...(props as React.ComponentPropsWithoutRef<"a">)} />
-            )}
-            className="flex items-center gap-3 px-2 py-2 rounded-lg text-sm text-sidebar-foreground/60 hover:bg-black/5 hover:text-sidebar-foreground transition-all"
-          >
-            <Bell className="w-4.5 h-4.5 shrink-0" />
-            <AnimatePresence>
-              {!collapsed && (
-                <motion.span initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-                  Notificações
-                </motion.span>
-              )}
-            </AnimatePresence>
-          </TooltipTrigger>
-          {!mobile && collapsed && <TooltipContent side="right">Notificações</TooltipContent>}
-        </Tooltip>
         {showSettings && (
           <Tooltip>
             <TooltipTrigger

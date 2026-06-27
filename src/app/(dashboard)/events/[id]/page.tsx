@@ -9,12 +9,12 @@ import {
   Truck,
   Lock,
   Package,
-  CornerDownLeft,
   Lightbulb,
   Building2,
   CalendarDays,
   AlertTriangle,
   FileText,
+  Trash2,
 } from "lucide-react";
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -34,9 +34,12 @@ import {
   promoteToReadyToLoad,
   removeEquipmentFromEvent,
   toggleEquipmentSeparated,
+  deleteEvent,
 } from "@/app/(dashboard)/events/actions";
 
+import { listEquipmentTemplates } from "@/lib/equipmentTemplates";
 import { AddEquipmentSheet } from "@/app/(dashboard)/events/[id]/AddEquipmentSheet";
+import { ApplyTemplateButton } from "@/app/(dashboard)/events/[id]/ApplyTemplateButton";
 import { EditEventDetailsSheet } from "@/app/(dashboard)/events/[id]/EditEventDetailsSheet";
 import { EventDatesPanel } from "@/app/(dashboard)/events/[id]/EventDatesPanel";
 import { SpeakersPanel } from "@/app/(dashboard)/events/[id]/SpeakersPanel";
@@ -77,6 +80,10 @@ export default async function EventDetailPage({ params }: EventDetailPageProps) 
       }))
     : [];
 
+  const equipmentTemplates = context?.primaryOrganization?.id
+    ? await listEquipmentTemplates(context.primaryOrganization.id)
+    : [];
+
   const checklistDone = event.checklist.filter((c) => c.done).length;
   const gateProgress = getGateProgress(event.checklist);
   const checklistComplete = isChecklistComplete(event.checklist);
@@ -87,6 +94,7 @@ export default async function EventDetailPage({ params }: EventDetailPageProps) 
     context?.role ?? ""
   );
   const canPromote = ["super_admin", "admin", "operations"].includes(context?.role ?? "");
+  const canDelete = ["super_admin", "admin"].includes(context?.role ?? "");
   const canEditEquipment = canPromote && isReadyToLoad;
 
   const organizationId = context?.primaryOrganization?.id;
@@ -162,6 +170,38 @@ export default async function EventDetailPage({ params }: EventDetailPageProps) 
           </Link>
         </div>
         {canPromote && <EditEventDetailsSheet event={event} clients={clients} />}
+        {canDelete &&
+          (event.status === "in_field" ? (
+            <button
+              type="button"
+              disabled
+              title="Conclua o retorno antes de excluir uma OS em campo."
+              className="inline-flex items-center gap-2 rounded-xl border border-border bg-card px-4 py-2 text-sm font-semibold text-muted-foreground opacity-50"
+            >
+              <Trash2 className="h-4 w-4" />
+              Excluir OS
+            </button>
+          ) : (
+            <DeleteConfirmDialog
+              action={deleteEvent}
+              itemId={event.id}
+              itemName={event.name}
+              itemLabel="OS"
+              title="Excluir OS"
+              description="Esta ação remove a OS e tudo vinculado a ela (checklist, datas, escala, palestrantes, extras e a lista de equipamentos). Não pode ser desfeita."
+              confirmLabel="Excluir OS"
+              pendingLabel="Excluindo..."
+              render={
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-2 rounded-xl border border-red-500/20 bg-card px-4 py-2 text-sm font-semibold text-red-600 transition hover:bg-red-500/5"
+                />
+              }
+            >
+              <Trash2 className="h-4 w-4" />
+              Excluir OS
+            </DeleteConfirmDialog>
+          ))}
         <div
           className={`w-full shrink-0 rounded-xl border p-4 ${
             isReadyToLoad
@@ -489,8 +529,8 @@ export default async function EventDetailPage({ params }: EventDetailPageProps) 
                                   }`}
                                   title={
                                     eq.loaded
-                                      ? "Carregado no checkout"
-                                      : "Aguardando checkout"
+                                      ? "Carregado (bipado)"
+                                      : "Aguardando carregamento"
                                   }
                                 >
                                   {eq.loaded && (
@@ -546,7 +586,10 @@ export default async function EventDetailPage({ params }: EventDetailPageProps) 
                 </>
               )}
 
-              <div className="mt-3 flex items-center justify-between gap-2">
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                {canEditEquipment && (
+                  <ApplyTemplateButton eventId={event.id} templates={equipmentTemplates} />
+                )}
                 <div>
                   {canEditEquipment && (
                     <AddEquipmentSheet
@@ -591,26 +634,6 @@ export default async function EventDetailPage({ params }: EventDetailPageProps) 
                         {}
                       )}
                     />
-                  )}
-                </div>
-                <div className="flex items-center gap-2">
-                  {event.status === "in_field" && (
-                    <Link
-                      href={`/checkin?eventId=${event.id}`}
-                      className="flex items-center gap-2 rounded-lg border border-blue-500/30 bg-blue-500/10 px-4 py-2 text-sm font-medium text-blue-600 transition-all hover:bg-blue-500/20"
-                    >
-                      <CornerDownLeft className="h-4 w-4" />
-                      Check-in de Retorno
-                    </Link>
-                  )}
-                  {(event.status === "ready_to_load" || event.status === "in_field") && (
-                    <Link
-                      href={`/checkout?eventId=${event.id}`}
-                      className="flex items-center gap-2 rounded-lg border border-border px-4 py-2 text-sm text-muted-foreground transition-all hover:bg-black/5 hover:text-foreground"
-                    >
-                      <Truck className="h-4 w-4" />
-                      {event.status === "in_field" ? "Ver Checkout" : "Iniciar Checkout"}
-                    </Link>
                   )}
                 </div>
               </div>

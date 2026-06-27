@@ -8,6 +8,9 @@ export type EquipmentType = "serialized" | "bulk";
 
 export type EquipmentStatus = "available" | "reserved" | "in_field" | "maintenance" | "inactive";
 
+/** Condição de uma unidade no retorno de uma OS. */
+export type UnitCondition = "ok" | "damaged" | "lost";
+
 export interface EquipmentCategory {
   id: string;
   organizationId: string;

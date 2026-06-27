@@ -135,6 +135,33 @@ export function EditEventDetailsSheet({ event, clients }: EditEventDetailsSheetP
               </label>
             </div>
 
+            <div className="grid gap-4 sm:grid-cols-2">
+              <label className={LABEL_CLASS}>
+                <span className={LABEL_TEXT_CLASS}>Valor da locação (R$)</span>
+                <input
+                  name="value"
+                  inputMode="decimal"
+                  placeholder="0,00"
+                  defaultValue={
+                    event.valueCents != null ? (event.valueCents / 100).toFixed(2) : ""
+                  }
+                  className={INPUT_CLASS}
+                />
+              </label>
+              <label className={LABEL_CLASS}>
+                <span className={LABEL_TEXT_CLASS}>Status da fatura</span>
+                <select
+                  name="invoiceStatus"
+                  defaultValue={event.invoiceStatus}
+                  className={INPUT_CLASS}
+                >
+                  <option value="draft">Rascunho</option>
+                  <option value="sent">Enviada</option>
+                  <option value="paid">Paga</option>
+                </select>
+              </label>
+            </div>
+
             <div className="grid gap-4 rounded-xl border border-border bg-card/50 p-4">
               <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                 <MapPin className="h-3.5 w-3.5" />

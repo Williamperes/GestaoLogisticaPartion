@@ -105,6 +105,11 @@ export function EventSheet({ clients, templates }: EventSheetProps) {
               </label>
             </div>
 
+            <label className={LABEL_CLASS}>
+              <span className={LABEL_TEXT_CLASS}>Valor da locação (R$)</span>
+              <input name="value" inputMode="decimal" placeholder="0,00" className={INPUT_CLASS} />
+            </label>
+
             {/* Local */}
             <div className="grid gap-4 rounded-xl border border-border bg-card/50 p-4">
               <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
