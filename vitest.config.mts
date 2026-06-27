@@ -15,9 +15,9 @@ export default defineConfig({
     clearMocks: true,
     restoreMocks: true,
     coverage: {
-      // Conta TODOS os arquivos de src, mesmo os nunca importados por um
-      // teste (ex.: componentes .tsx), para um % honesto do repositório.
-      all: true,
+      // `include` já conta TODOS os arquivos de src, mesmo os nunca importados
+      // por um teste (ex.: componentes .tsx), para um % honesto do repositório.
+      // (No Vitest 4 a opção `all` foi removida — `include` cobre esse papel.)
       include: ["src/**/*.{ts,tsx}"],
       exclude: [
         "src/**/*.d.ts",
