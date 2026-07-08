@@ -43,7 +43,7 @@ export function SubrentalsToolbar({ events }: { events: EventOption[] }) {
             </SheetDescription>
           </SheetHeader>
 
-          <form action={createSubrental} className="flex h-full flex-col">
+          <form action={createSubrental} className="flex flex-1 flex-col overflow-y-auto">
             <div className="grid gap-4 px-6 py-6">
               <label className="space-y-2">
                 <span className="text-sm font-medium text-foreground">Tipo</span>
