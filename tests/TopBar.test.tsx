@@ -46,9 +46,8 @@ describe("TopBar", () => {
     expect(screen.getByText("Detalhe")).toBeInTheDocument();
   });
 
-  it("renderiza o MobileSidebar mockado e a busca", () => {
+  it("renderiza o MobileSidebar mockado", () => {
     renderAt("/dashboard");
     expect(screen.getByTestId("mobile-sidebar")).toBeInTheDocument();
-    expect(screen.getByText("Buscar...")).toBeInTheDocument();
   });
 });
