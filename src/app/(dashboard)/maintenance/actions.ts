@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
-import { getCurrentAuthUser } from "@/lib/auth/session";
+import { getCurrentUserContext } from "@/lib/auth/session";
 
 export interface ResolveResult {
   ok: boolean;
@@ -15,15 +15,24 @@ export interface ResolveResult {
  * unidade ao estoque (status 'available'), liberando-a para novas OS.
  */
 export async function resolveMaintenance(id: string): Promise<ResolveResult> {
-  const user = await getCurrentAuthUser();
-  if (!user) return { ok: false, error: "Não autenticado" };
+  const context = await getCurrentUserContext();
+  if (!context) return { ok: false, error: "Não autenticado" };
+
+  const allowedRoles = ["super_admin", "admin", "operations", "warehouse", "employee"];
+  if (!context.role || !allowedRoles.includes(context.role)) {
+    return { ok: false, error: "Sem permissão" };
+  }
+
+  const organizationId = context.primaryOrganization?.id;
+  if (!organizationId) return { ok: false, error: "Organização não encontrada" };
 
   const supabase = createSupabaseAdminClient();
 
   const { data: record, error: recErr } = await supabase
     .from("equipment_maintenance")
-    .select("id, equipment_unit_id, status")
+    .select("id, organization_id, equipment_id, equipment_unit_id, status")
     .eq("id", id)
+    .eq("organization_id", organizationId)
     .maybeSingle();
   if (recErr) return { ok: false, error: recErr.message };
   if (!record) return { ok: false, error: "Ocorrência não encontrada" };
@@ -33,16 +42,18 @@ export async function resolveMaintenance(id: string): Promise<ResolveResult> {
     .from("equipment_maintenance")
     .update({
       status: "resolved",
-      resolved_by: user.id,
+      resolved_by: context.userId,
       resolved_at: new Date().toISOString(),
     })
-    .eq("id", id);
+    .eq("id", id)
+    .eq("organization_id", organizationId);
   if (updErr) return { ok: false, error: updErr.message };
 
   const { error: unitErr } = await supabase
     .from("equipment_units")
     .update({ status: "available" })
-    .eq("id", record.equipment_unit_id);
+    .eq("id", record.equipment_unit_id)
+    .eq("equipment_id", record.equipment_id);
   if (unitErr) return { ok: false, error: unitErr.message };
 
   revalidatePath("/maintenance");
