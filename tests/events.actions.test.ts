@@ -33,6 +33,7 @@ vi.mock("@/lib/inventory", () => ({
 
 import {
   createEvent,
+  deleteEvent,
   toggleChecklistItem,
   promoteToReadyToLoad,
   updateEventDetails,
@@ -75,6 +76,39 @@ describe("events actions", () => {
   });
 
   // ── Autorização ──────────────────────────────────────────────────
+
+  it("accepts employee in the shared event write guard", async () => {
+    mocks.getCurrentUserContext.mockResolvedValue({
+      role: "employee",
+      userId: "employee-1",
+      primaryOrganization: null,
+    });
+    await expect(
+      createEvent(buildFormData({ name: "OS Funcionário", startDate: "2026-09-01" }))
+    ).rejects.toThrow("NEXT_REDIRECT:/dashboard?error=organization_not_found");
+  });
+
+  it("accepts employee in the checklist guard", async () => {
+    mocks.getCurrentUserContext.mockResolvedValue({
+      role: "employee",
+      userId: "employee-1",
+      primaryOrganization: { id: "org-1" },
+    });
+    await expect(toggleChecklistItem(buildFormData({}))).rejects.toThrow(
+      "NEXT_REDIRECT:/events/?error=Item inválido."
+    );
+  });
+
+  it("keeps employee blocked from deleting an event", async () => {
+    mocks.getCurrentUserContext.mockResolvedValue({
+      role: "employee",
+      userId: "employee-1",
+      primaryOrganization: { id: "org-1" },
+    });
+    await expect(deleteEvent(buildFormData({ eventId: "event-1" }))).rejects.toThrow(
+      "NEXT_REDIRECT:/dashboard?error=unauthorized"
+    );
+  });
 
   it("blocks unauthenticated users from creating events", async () => {
     mocks.getCurrentUserContext.mockResolvedValue(null);

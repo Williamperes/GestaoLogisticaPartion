@@ -8,8 +8,8 @@ import { DEFAULT_CHECKLIST_ITEMS, isChecklistComplete } from "@/lib/events";
 import { getChecklistTemplate } from "@/lib/checklist-templates";
 import { getEquipmentAvailability, availabilityKey } from "@/lib/inventory";
 
-const WRITE_ROLES = ["super_admin", "admin", "operations"] as const;
-const CHECKLIST_ROLES = ["super_admin", "admin", "operations", "warehouse"] as const;
+const WRITE_ROLES = ["super_admin", "admin", "operations", "employee"] as const;
+const CHECKLIST_ROLES = ["super_admin", "admin", "operations", "warehouse", "employee"] as const;
 
 async function requireWriteRole() {
   const context = await getCurrentUserContext();
