@@ -42,6 +42,9 @@ describe("TeamToolbar", () => {
     await user.click(checkbox);
     expect(screen.getByPlaceholderText("Mínimo 8 caracteres")).toBeInTheDocument();
     expect(screen.getByText("Almoxarife (bipa carregar/retornar)")).toBeInTheDocument();
+    expect(screen.getByRole("option", {
+      name: "Funcionário — Eventos/OS e Manutenção",
+    })).toHaveValue("employee");
   });
 
   it("o botão 'Gerar' preenche a senha temporária", async () => {

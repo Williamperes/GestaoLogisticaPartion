@@ -212,7 +212,7 @@ describe("team actions", () => {
       role: "Operador FOH",
       email: "diego@partion.com",
       provision_access: "on",
-      access_role: "warehouse",
+      access_role: "employee",
       password: "tempPass123",
     });
 
@@ -227,7 +227,7 @@ describe("team actions", () => {
     expect(orgInsert).toHaveBeenCalledWith({
       user_id: "user-new",
       organization_id: "org-1",
-      role: "warehouse",
+      role: "employee",
       is_primary: true,
     });
     expect(teamInsert).toHaveBeenCalledWith(
@@ -249,7 +249,7 @@ describe("team actions", () => {
           role: "FOH",
           email: "x@y.com",
           provision_access: "on",
-          access_role: "warehouse",
+          access_role: "employee",
           password: "longpass1",
         })
       )
@@ -282,7 +282,7 @@ describe("team actions", () => {
           role: "FOH",
           email: "x@y.com",
           provision_access: "on",
-          access_role: "warehouse",
+          access_role: "employee",
           password: "longpass1",
         })
       )
@@ -428,7 +428,7 @@ describe("team actions", () => {
       provisionTeamMemberAccess(
         buildFormData({
           id: "member-1",
-          access_role: "warehouse",
+          access_role: "employee",
           password: "tempPass123",
         })
       )
@@ -443,7 +443,7 @@ describe("team actions", () => {
     expect(orgInsert).toHaveBeenCalledWith({
       user_id: "user-new",
       organization_id: "org-1",
-      role: "warehouse",
+      role: "employee",
       is_primary: true,
     });
     expect(update).toHaveBeenCalledWith({ user_id: "user-new" });

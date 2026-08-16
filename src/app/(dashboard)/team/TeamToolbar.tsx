@@ -163,6 +163,7 @@ export function TeamToolbar({ canProvision }: { canProvision: boolean }) {
                         >
                           <option value="warehouse">Almoxarife (bipa carregar/retornar)</option>
                           <option value="operations">Operações (acesso completo de OS)</option>
+                          <option value="employee">Funcionário — Eventos/OS e Manutenção</option>
                         </select>
                       </label>
                     </div>

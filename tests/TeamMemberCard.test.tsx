@@ -105,6 +105,9 @@ describe("TeamMemberCard", () => {
 
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByText("yuri@example.com")).toBeInTheDocument();
+    expect(within(dialog).getByRole("option", {
+      name: "Funcionário — Eventos/OS e Manutenção",
+    })).toHaveValue("employee");
     const pwInput = document.querySelector('input[name="password"]') as HTMLInputElement;
     expect(pwInput.value).toBe("");
     // Digitar dispara o onChange controlado (linha 339).

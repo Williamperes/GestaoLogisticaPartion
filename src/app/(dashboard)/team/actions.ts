@@ -6,8 +6,8 @@ import { createSupabaseAdminClient } from "@/lib/supabase/server";
 import { getCurrentUserContext } from "@/lib/auth/session";
 import { ensureTeamSpecialty } from "@/lib/team";
 
-const ACCESS_ROLES = new Set(["warehouse", "operations"] as const);
-type AccessRole = "warehouse" | "operations";
+const ACCESS_ROLES = new Set(["warehouse", "operations", "employee"] as const);
+type AccessRole = "warehouse" | "operations" | "employee";
 
 function ensureTeamPermission(role: string | null | undefined) {
   return !!role && ["super_admin", "admin", "operations"].includes(role);
