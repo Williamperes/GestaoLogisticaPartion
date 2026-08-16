@@ -22,6 +22,7 @@ import { DashboardCharts } from "@/app/(dashboard)/dashboard/DashboardCharts";
 export default async function DashboardPage() {
   const context = await getCurrentUserContext();
   if (context?.role === "warehouse") redirect("/scan");
+  if (context?.role === "employee") redirect("/events");
   const organizationId = context?.primaryOrganization?.id;
 
   const [kpis, categoryStats, utilizationHistory, upcomingEvents] = organizationId

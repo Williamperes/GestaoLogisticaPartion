@@ -58,6 +58,18 @@ describe("Sidebar — filtro de navegação por papel", () => {
     expect(screen.queryByText("Configurações")).not.toBeInTheDocument();
   });
 
+  it("employee vê somente Eventos & OS e Manutenção", () => {
+    render(<Sidebar userName="Funcionário" userRole="Funcionário" role="employee" />);
+    expect(screen.getByText("Eventos & OS")).toBeInTheDocument();
+    expect(screen.getByText("Manutenção")).toBeInTheDocument();
+    for (const hidden of [
+      "Dashboard", "Bipar OS", "Inventário", "Clientes", "Equipe",
+      "Sublocações", "Configurações",
+    ]) {
+      expect(screen.queryByText(hidden)).not.toBeInTheDocument();
+    }
+  });
+
   it("role null não renderiza nenhum grupo de navegação", () => {
     render(<Sidebar userName="X" userRole="—" role={null} />);
     expect(screen.queryByText("Dashboard")).not.toBeInTheDocument();

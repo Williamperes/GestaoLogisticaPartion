@@ -197,6 +197,20 @@ vi.mock("@/components/ui/delete-confirm-dialog", () => ({ DeleteConfirmDialog: (
 import EventDetailPage from "@/app/(dashboard)/events/[id]/page";
 
 describe("EventDetailPage (RSC)", () => {
+  it("employee pode editar a OS sem receber controle de exclusão", async () => {
+    ev.getEventById.mockResolvedValueOnce(eventDetail());
+    auth.getCurrentUserContext.mockResolvedValueOnce({
+      role: "employee",
+      userId: "u1",
+      primaryOrganization: { id: "org-1" },
+    });
+    const ui = await EventDetailPage({ params: Promise.resolve({ id: "ev-1" }) });
+    const { render, screen } = await import("@testing-library/react");
+    render(ui);
+    expect(screen.getByText("EDIT_EVENT_SHEET")).toBeInTheDocument();
+    expect(screen.queryByText("Excluir OS")).not.toBeInTheDocument();
+  });
+
   it("renderiza header, cliente e checklist", async () => {
     ev.getEventById.mockResolvedValueOnce(eventDetail());
     const ui = await EventDetailPage({ params: Promise.resolve({ id: "ev-1" }) });

@@ -97,4 +97,13 @@ describe("DashboardPage (RSC)", () => {
     });
     await expect(DashboardPage()).rejects.toThrow(/REDIRECT:\/scan/);
   });
+
+  it("redireciona employee para /events", async () => {
+    auth.getCurrentUserContext.mockResolvedValueOnce({
+      role: "employee",
+      userId: "u1",
+      primaryOrganization: { id: "org-1" },
+    });
+    await expect(DashboardPage()).rejects.toThrow(/REDIRECT:\/events/);
+  });
 });

@@ -10,7 +10,7 @@ import { ResolveButton } from "./ResolveButton";
 export default async function MaintenancePage() {
   const context = await getCurrentUserContext();
   if (!context) redirect("/login");
-  if (!context.role || !["super_admin", "admin", "operations", "warehouse"].includes(context.role)) {
+  if (!context.role || !["super_admin", "admin", "operations", "warehouse", "employee"].includes(context.role)) {
     redirect("/dashboard");
   }
 

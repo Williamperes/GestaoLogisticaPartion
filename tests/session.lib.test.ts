@@ -188,6 +188,13 @@ describe("getDefaultAppPathForUser", () => {
     expect(await getDefaultAppPathForUser("u-1")).toBe("/scan");
   });
 
+  it("retorna /events para role employee", async () => {
+    mocks.createSupabaseAdminClient.mockReturnValue(
+      fakeSupabase({ organization_members: [() => chain({ data: { role: "employee", is_primary: true }, error: null })] })
+    );
+    expect(await getDefaultAppPathForUser("u-1")).toBe("/events");
+  });
+
   it("retorna /dashboard por padrão (outro role)", async () => {
     mocks.createSupabaseAdminClient.mockReturnValue(
       fakeSupabase({ organization_members: [() => chain({ data: { role: "admin", is_primary: true }, error: null })] })

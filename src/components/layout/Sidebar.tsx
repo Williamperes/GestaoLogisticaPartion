@@ -46,7 +46,8 @@ const NON_WAREHOUSE: readonly NavRole[] = ["super_admin", "admin", "operations",
 const ADMIN_OPS: readonly NavRole[] = ["super_admin", "admin", "operations"];
 const ADMIN_ONLY: readonly NavRole[] = ["super_admin", "admin"];
 const WAREHOUSE_ONLY: readonly NavRole[] = ["warehouse"];
-const OPS_WAREHOUSE: readonly NavRole[] = ["super_admin", "admin", "operations", "warehouse"];
+const EVENTS_ROLES: readonly NavRole[] = ["super_admin", "admin", "operations", "finance", "employee"];
+const MAINTENANCE_ROLES: readonly NavRole[] = ["super_admin", "admin", "operations", "warehouse", "employee"];
 
 const navGroups: readonly NavGroup[] = [
   {
@@ -54,9 +55,9 @@ const navGroups: readonly NavGroup[] = [
     items: [
       { href: "/scan", icon: ScanLine, label: "Bipar OS", roles: WAREHOUSE_ONLY },
       { href: "/dashboard", icon: LayoutDashboard, label: "Dashboard", roles: NON_WAREHOUSE },
-      { href: "/events", icon: CalendarDays, label: "Eventos & OS", roles: NON_WAREHOUSE },
+      { href: "/events", icon: CalendarDays, label: "Eventos & OS", roles: EVENTS_ROLES },
       { href: "/inventory", icon: Package, label: "Inventário", roles: ADMIN_OPS },
-      { href: "/maintenance", icon: Wrench, label: "Manutenção", roles: OPS_WAREHOUSE },
+      { href: "/maintenance", icon: Wrench, label: "Manutenção", roles: MAINTENANCE_ROLES },
     ],
   },
   {

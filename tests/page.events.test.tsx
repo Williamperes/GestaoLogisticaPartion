@@ -1,5 +1,8 @@
 // @vitest-environment jsdom
-import { describe, expect, it, vi } from "vitest";
+import { cleanup } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+afterEach(() => cleanup());
 
 vi.mock("next/navigation", () => ({
   redirect: vi.fn((u: string) => {
@@ -78,12 +81,24 @@ vi.mock("@/lib/team", async (orig) => ({
 
 // EventSheet é client — stub.
 vi.mock("@/app/(dashboard)/events/EventSheet", () => ({
-  EventSheet: () => null,
+  EventSheet: () => <button>Novo Evento</button>,
 }));
 
 import EventsPage from "@/app/(dashboard)/events/page";
 
 describe("EventsPage (RSC)", () => {
+  it("employee recebe o controle de criação de OS", async () => {
+    auth.getCurrentUserContext.mockResolvedValueOnce({
+      role: "employee",
+      userId: "u1",
+      primaryOrganization: { id: "org-1" },
+    });
+    const ui = await EventsPage({ searchParams: Promise.resolve({}) });
+    const { render, screen } = await import("@testing-library/react");
+    render(ui);
+    expect(screen.getByRole("button", { name: "Novo Evento" })).toBeInTheDocument();
+  });
+
   it("renderiza tabela com o evento listado", async () => {
     const ui = await EventsPage({ searchParams: Promise.resolve({}) });
     const { render, screen } = await import("@testing-library/react");

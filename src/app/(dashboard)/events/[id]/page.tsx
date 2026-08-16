@@ -90,10 +90,10 @@ export default async function EventDetailPage({ params }: EventDetailPageProps) 
   const isReadyToLoad = event.status === "ready_to_load";
   const equipmentLocked = event.status === "planning";
 
-  const canManageChecklist = ["super_admin", "admin", "operations", "warehouse"].includes(
+  const canManageChecklist = ["super_admin", "admin", "operations", "warehouse", "employee"].includes(
     context?.role ?? ""
   );
-  const canPromote = ["super_admin", "admin", "operations"].includes(context?.role ?? "");
+  const canPromote = ["super_admin", "admin", "operations", "employee"].includes(context?.role ?? "");
   const canDelete = ["super_admin", "admin"].includes(context?.role ?? "");
   const canEditEquipment = canPromote && isReadyToLoad;
 

@@ -30,6 +30,14 @@ describe("canAccessArea", () => {
     expect(canAccessArea("finance", "operations")).toBe(false);
   });
 
+  it("reconhece employee sem conceder uma área ampla", () => {
+    expect(APP_ROLES).toContain("employee");
+    expect(canAccessArea("employee", "operations")).toBe(false);
+    expect(canAccessArea("employee", "warehouse")).toBe(false);
+    expect(canAccessArea("employee", "admin")).toBe(false);
+    expect(canAccessArea("employee", "client")).toBe(false);
+  });
+
   it("todo papel listado em uma área é um AppRole válido", () => {
     for (const roles of Object.values(DASHBOARD_AREAS)) {
       for (const role of roles) {
