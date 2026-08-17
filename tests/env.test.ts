@@ -59,3 +59,24 @@ describe("getSupabaseServerEnv", () => {
     expect(() => getSupabaseServerEnv()).toThrow(/SUPABASE_SECRET_KEY/);
   });
 });
+
+describe("getEmployeeOrganizationId", () => {
+  it("retorna um UUID valido da organizacao", async () => {
+    const { getEmployeeOrganizationId } = await loadEnv({
+      EMPLOYEE_ORGANIZATION_ID: "11111111-1111-4111-8111-111111111111",
+    });
+
+    expect(getEmployeeOrganizationId()).toBe("11111111-1111-4111-8111-111111111111");
+  });
+
+  it.each([undefined, "not-a-uuid"])(
+    "rejeita EMPLOYEE_ORGANIZATION_ID ausente ou invalido: %s",
+    async (value) => {
+      const { getEmployeeOrganizationId } = await loadEnv({
+        EMPLOYEE_ORGANIZATION_ID: value,
+      });
+
+      expect(() => getEmployeeOrganizationId()).toThrow(/EMPLOYEE_ORGANIZATION_ID/);
+    }
+  );
+});

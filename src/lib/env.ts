@@ -8,6 +8,9 @@ const requiredServerEnv = {
   SUPABASE_SECRET_KEY: process.env.SUPABASE_SECRET_KEY,
 } as const;
 
+const employeeOrganizationId = process.env.EMPLOYEE_ORGANIZATION_ID;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 function getMissingKeys(env: Record<string, string | undefined>) {
   return Object.entries(env)
     .filter(([, value]) => !value)
@@ -39,4 +42,12 @@ export function getSupabaseServerEnv() {
     publishableKey: requiredServerEnv.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!,
     secretKey: requiredServerEnv.SUPABASE_SECRET_KEY!,
   };
+}
+
+export function getEmployeeOrganizationId() {
+  if (!employeeOrganizationId || !UUID_PATTERN.test(employeeOrganizationId)) {
+    throw new Error("Missing or invalid EMPLOYEE_ORGANIZATION_ID");
+  }
+
+  return employeeOrganizationId;
 }

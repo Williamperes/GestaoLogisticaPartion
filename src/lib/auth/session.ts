@@ -127,7 +127,7 @@ export const getCurrentUserContext = cache(async (): Promise<UserContext | null>
   };
 });
 
-export async function getDefaultAppPathForUser(userId: string) {
+export async function getPrimaryAppRoleForUser(userId: string): Promise<AppRole | null> {
   const admin = createSupabaseAdminClient();
   const { data, error } = await admin
     .from("organization_members")
@@ -141,8 +141,14 @@ export async function getDefaultAppPathForUser(userId: string) {
     throw error;
   }
 
-  if (data?.role === "client") return "/client";
-  if (data?.role === "warehouse") return "/scan";
-  if (data?.role === "employee") return "/events";
+  return data?.role ?? null;
+}
+
+export async function getDefaultAppPathForUser(userId: string) {
+  const role = await getPrimaryAppRoleForUser(userId);
+
+  if (role === "client") return "/client";
+  if (role === "warehouse") return "/scan";
+  if (role === "employee") return "/events";
   return "/dashboard";
 }

@@ -17,6 +17,7 @@ import {
   getCurrentAuthUser,
   getCurrentUserContext,
   getDefaultAppPathForUser,
+  getPrimaryAppRoleForUser,
 } from "@/lib/auth/session";
 
 /**
@@ -214,5 +215,37 @@ describe("getDefaultAppPathForUser", () => {
       fakeSupabase({ organization_members: [() => chain({ data: null, error: new Error("db fail") })] })
     );
     await expect(getDefaultAppPathForUser("u-1")).rejects.toThrow("db fail");
+  });
+});
+
+describe("getPrimaryAppRoleForUser", () => {
+  it("retorna o perfil do membership primario", async () => {
+    mocks.createSupabaseAdminClient.mockReturnValue(
+      fakeSupabase({
+        organization_members: [
+          () => chain({ data: { role: "employee", is_primary: true }, error: null }),
+        ],
+      })
+    );
+
+    expect(await getPrimaryAppRoleForUser("u-1")).toBe("employee");
+  });
+
+  it("retorna null quando o usuario nao possui membership", async () => {
+    mocks.createSupabaseAdminClient.mockReturnValue(
+      fakeSupabase({ organization_members: [() => chain({ data: null, error: null })] })
+    );
+
+    expect(await getPrimaryAppRoleForUser("u-2")).toBeNull();
+  });
+
+  it("propaga erro ao consultar o perfil", async () => {
+    mocks.createSupabaseAdminClient.mockReturnValue(
+      fakeSupabase({
+        organization_members: [() => chain({ data: null, error: new Error("db fail") })],
+      })
+    );
+
+    await expect(getPrimaryAppRoleForUser("u-3")).rejects.toThrow("db fail");
   });
 });
