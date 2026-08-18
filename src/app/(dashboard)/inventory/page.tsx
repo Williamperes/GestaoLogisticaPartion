@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { Search, Package, History } from "lucide-react";
+import { Search, Package, History, Download } from "lucide-react";
 import Link from "next/link";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { InventorySheet } from "@/app/(dashboard)/inventory/InventorySheet";
@@ -55,6 +55,14 @@ export default async function InventoryPage({ searchParams }: InventoryPageProps
         </div>
         {canWrite && (
           <div className="flex items-center gap-2">
+            <a
+              href="/inventory/pdf"
+              download
+              className="flex h-9 items-center gap-2 rounded-xl border border-border bg-card px-3 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
+            >
+              <Download className="h-4 w-4" />
+              Baixar inventário em PDF
+            </a>
             <Link
               href="/inventory/categories"
               className="flex h-9 items-center rounded-xl border border-border bg-card px-3 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"

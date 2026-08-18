@@ -76,6 +76,16 @@ vi.mock("@/app/(dashboard)/inventory/InventorySheet", () => ({
 import InventoryPage from "@/app/(dashboard)/inventory/page";
 
 describe("InventoryPage (RSC)", () => {
+  it("oferece o download do inventário completo em PDF", async () => {
+    const ui = await InventoryPage({ searchParams: Promise.resolve({ q: "mesa" }) });
+    const { render, screen } = await import("@testing-library/react");
+    render(ui);
+
+    const downloadLink = screen.getByRole("link", { name: "Baixar inventário em PDF" });
+    expect(downloadLink).toHaveAttribute("href", "/inventory/pdf");
+    expect(downloadLink).toHaveAttribute("download");
+  });
+
   it("renderiza grid com item serializado", async () => {
     const ui = await InventoryPage({ searchParams: Promise.resolve({}) });
     const { render, screen } = await import("@testing-library/react");

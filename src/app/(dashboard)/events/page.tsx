@@ -65,7 +65,7 @@ export default async function EventsPage({ searchParams }: EventsPageProps) {
       ? events
       : events.filter((e) => e.status === statusFilter);
 
-  const canCreate = ["super_admin", "admin", "operations", "employee"].includes(context?.role ?? "");
+  const canCreate = ["super_admin", "admin", "operations"].includes(context?.role ?? "");
 
   return (
     <div className="space-y-5">

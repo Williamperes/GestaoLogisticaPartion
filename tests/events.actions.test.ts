@@ -77,15 +77,15 @@ describe("events actions", () => {
 
   // ── Autorização ──────────────────────────────────────────────────
 
-  it("accepts employee in the shared event write guard", async () => {
+  it("blocks employee from creating events", async () => {
     mocks.getCurrentUserContext.mockResolvedValue({
       role: "employee",
       userId: "employee-1",
-      primaryOrganization: null,
+      primaryOrganization: { id: "org-1" },
     });
     await expect(
       createEvent(buildFormData({ name: "OS Funcionário", startDate: "2026-09-01" }))
-    ).rejects.toThrow("NEXT_REDIRECT:/dashboard?error=organization_not_found");
+    ).rejects.toThrow("NEXT_REDIRECT:/dashboard?error=unauthorized");
   });
 
   it("accepts employee in the checklist guard", async () => {

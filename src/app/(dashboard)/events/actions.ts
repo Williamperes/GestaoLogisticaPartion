@@ -9,7 +9,16 @@ import { getChecklistTemplate } from "@/lib/checklist-templates";
 import { getEquipmentAvailability, availabilityKey } from "@/lib/inventory";
 
 const WRITE_ROLES = ["super_admin", "admin", "operations", "employee"] as const;
+const CREATE_ROLES = ["super_admin", "admin", "operations"] as const;
 const CHECKLIST_ROLES = ["super_admin", "admin", "operations", "warehouse", "employee"] as const;
+
+async function requireCreateRole() {
+  const context = await getCurrentUserContext();
+  if (!context?.role || !CREATE_ROLES.includes(context.role as (typeof CREATE_ROLES)[number])) {
+    redirect("/dashboard?error=unauthorized");
+  }
+  return context;
+}
 
 async function requireWriteRole() {
   const context = await getCurrentUserContext();
@@ -41,7 +50,7 @@ function parseEventValueToCents(raw: string): number | null {
 }
 
 export async function createEvent(formData: FormData) {
-  const context = await requireWriteRole();
+  const context = await requireCreateRole();
 
   const organizationId = context.primaryOrganization?.id;
   if (!organizationId) {

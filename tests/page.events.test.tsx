@@ -87,7 +87,7 @@ vi.mock("@/app/(dashboard)/events/EventSheet", () => ({
 import EventsPage from "@/app/(dashboard)/events/page";
 
 describe("EventsPage (RSC)", () => {
-  it("employee recebe o controle de criação de OS", async () => {
+  it("employee não recebe o controle de criação de OS", async () => {
     auth.getCurrentUserContext.mockResolvedValueOnce({
       role: "employee",
       userId: "u1",
@@ -96,7 +96,7 @@ describe("EventsPage (RSC)", () => {
     const ui = await EventsPage({ searchParams: Promise.resolve({}) });
     const { render, screen } = await import("@testing-library/react");
     render(ui);
-    expect(screen.getByRole("button", { name: "Novo Evento" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Novo Evento" })).not.toBeInTheDocument();
   });
 
   it("renderiza tabela com o evento listado", async () => {
