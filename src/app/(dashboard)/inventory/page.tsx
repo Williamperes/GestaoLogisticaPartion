@@ -1,10 +1,15 @@
 import { redirect } from "next/navigation";
-import { Search, Package } from "lucide-react";
+import { Search, Package, History } from "lucide-react";
 import Link from "next/link";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { InventorySheet } from "@/app/(dashboard)/inventory/InventorySheet";
 import { getCurrentUserContext } from "@/lib/auth/session";
 import { listEquipment, listEquipmentCategories } from "@/lib/inventory";
+import {
+  getLatestMaintenanceReturnByEquipment,
+  listResolvedMaintenanceHistory,
+} from "@/lib/maintenance";
+import { formatDateTimeBR } from "@/lib/dates";
 
 interface InventoryPageProps {
   searchParams: Promise<{ q?: string }>;
@@ -20,13 +25,19 @@ export default async function InventoryPage({ searchParams }: InventoryPageProps
     redirect("/dashboard");
   }
   const organizationId = context.primaryOrganization?.id;
+  const canViewMaintenanceHistory = ["super_admin", "admin"].includes(context.role);
 
-  const [items, categories] = organizationId
+  const [items, categories, resolvedMaintenance] = organizationId
     ? await Promise.all([
         listEquipment(organizationId, search),
         listEquipmentCategories(organizationId),
+        canViewMaintenanceHistory
+          ? listResolvedMaintenanceHistory(organizationId)
+          : Promise.resolve([]),
       ])
-    : [[], []];
+    : [[], [], []];
+
+  const latestReturnByEquipment = getLatestMaintenanceReturnByEquipment(resolvedMaintenance);
 
   const filtered = items.filter((i) => i.type === "serialized");
 
@@ -113,6 +124,12 @@ export default async function InventoryPage({ searchParams }: InventoryPageProps
                   {item.serial ?? "—"}
                 </span>
               </div>
+              {latestReturnByEquipment[item.id] && (
+                <p className="mt-3 flex items-center gap-1.5 border-t border-border pt-3 text-[11px] font-medium text-emerald-700">
+                  <History className="h-3.5 w-3.5 shrink-0" />
+                  Voltou da manutenção em {formatDateTimeBR(latestReturnByEquipment[item.id])}
+                </p>
+              )}
             </Link>
           ))}
         </div>

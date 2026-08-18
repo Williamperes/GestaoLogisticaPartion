@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup } from "@testing-library/react";
+import { createElement } from "react";
 
 afterEach(() => cleanup());
 
@@ -30,6 +31,10 @@ vi.mock("@/lib/auth/session", () => ({
 
 const inv = vi.hoisted(() => ({
   getEquipmentById: vi.fn(),
+}));
+
+const maintenance = vi.hoisted(() => ({
+  listResolvedMaintenanceHistory: vi.fn(async () => []),
 }));
 
 function equipmentWithUnits() {
@@ -77,11 +82,19 @@ vi.mock("@/lib/inventory", async (orig) => ({
   listEquipmentCategories: vi.fn(async () => []),
 }));
 
+vi.mock("@/lib/maintenance", async (orig) => ({
+  ...(await orig<typeof import("@/lib/maintenance")>()),
+  listResolvedMaintenanceHistory: maintenance.listResolvedMaintenanceHistory,
+}));
+
 // Client children — stubs rendered as tiny markers so permission-gated
 // branches that mount them still execute the page's surrounding markup.
 function marker(text: string) {
-  const React = require("react");
-  return () => React.createElement("div", null, text);
+  function Marker() {
+    return createElement("div", null, text);
+  }
+  Marker.displayName = `Marker(${text})`;
+  return Marker;
 }
 vi.mock("@/components/inventory/QrCodeDisplay", () => ({ QrCodeDisplay: marker("QR_DISPLAY") }));
 vi.mock("@/components/inventory/LinkQrButton", () => ({ LinkQrButton: marker("LINK_QR") }));
@@ -323,5 +336,74 @@ describe("InventoryDetailPage (RSC)", () => {
     expect(screen.getByText("Sem QR")).toBeInTheDocument();
     // unidade com QR exibe QrCodeDisplay sem botão de link.
     expect(screen.getByText("QR_DISPLAY")).toBeInTheDocument();
+  });
+
+  it("admin ve o ultimo retorno e todo o historico de manutencao", async () => {
+    inv.getEquipmentById.mockResolvedValueOnce(equipmentWithUnits());
+    maintenance.listResolvedMaintenanceHistory.mockResolvedValueOnce([
+      {
+        id: "m-2",
+        organizationId: "org-1",
+        equipmentId: "eq-1",
+        equipmentName: "Mesa de Som X32",
+        equipmentUnitId: "u-1",
+        unitSerial: "SN-001",
+        eventId: "event-2",
+        eventName: "Evento B",
+        condition: "damaged",
+        note: "Troca de cabo",
+        status: "resolved",
+        resolvedAt: "2026-08-17T15:30:00.000Z",
+        createdAt: "2026-08-16T10:00:00.000Z",
+      },
+      {
+        id: "m-1",
+        organizationId: "org-1",
+        equipmentId: "eq-1",
+        equipmentName: "Mesa de Som X32",
+        equipmentUnitId: "u-1",
+        unitSerial: "SN-001",
+        eventId: "event-1",
+        eventName: "Evento A",
+        condition: "damaged",
+        note: null,
+        status: "resolved",
+        resolvedAt: "2026-07-10T12:00:00.000Z",
+        createdAt: "2026-07-09T09:00:00.000Z",
+      },
+    ]);
+
+    const ui = await InventoryDetailPage({
+      params: Promise.resolve({ id: "eq-1" }),
+      searchParams: Promise.resolve({}),
+    });
+    const { render, screen } = await import("@testing-library/react");
+    render(ui);
+
+    expect(screen.getByText("Último retorno da manutenção")).toBeInTheDocument();
+    expect(screen.getByText("17/08/2026 às 12:30")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Histórico de manutenção (2)" })).toBeInTheDocument();
+    expect(screen.getByText("Evento B")).toBeInTheDocument();
+    expect(screen.getByText("Evento A")).toBeInTheDocument();
+    expect(screen.getByText("Troca de cabo")).toBeInTheDocument();
+  });
+
+  it("operations nao consulta nem ve o historico de manutencao", async () => {
+    inv.getEquipmentById.mockResolvedValueOnce(equipmentWithUnits());
+    auth.getCurrentUserContext.mockResolvedValueOnce({
+      role: "operations",
+      userId: "u1",
+      primaryOrganization: { id: "org-1" },
+    });
+
+    const ui = await InventoryDetailPage({
+      params: Promise.resolve({ id: "eq-1" }),
+      searchParams: Promise.resolve({}),
+    });
+    const { render, screen } = await import("@testing-library/react");
+    render(ui);
+
+    expect(screen.queryByText("Último retorno da manutenção")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /Histórico de manutenção/ })).not.toBeInTheDocument();
   });
 });

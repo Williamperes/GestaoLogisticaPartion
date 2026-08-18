@@ -1,5 +1,8 @@
 // @vitest-environment jsdom
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanup } from "@testing-library/react";
+
+afterEach(() => cleanup());
 
 vi.mock("next/navigation", () => ({
   redirect: vi.fn((u: string) => {
@@ -55,6 +58,17 @@ vi.mock("@/lib/inventory", async (orig) => ({
   listEquipmentCategories: vi.fn(async () => []),
 }));
 
+const maintenance = vi.hoisted(() => ({
+  listResolvedMaintenanceHistory: vi.fn(async () => [
+    { equipmentId: "eq-1", resolvedAt: "2026-08-17T15:30:00.000Z" },
+  ]),
+}));
+
+vi.mock("@/lib/maintenance", async (orig) => ({
+  ...(await orig<typeof import("@/lib/maintenance")>()),
+  listResolvedMaintenanceHistory: maintenance.listResolvedMaintenanceHistory,
+}));
+
 vi.mock("@/app/(dashboard)/inventory/InventorySheet", () => ({
   InventorySheet: () => null,
 }));
@@ -68,6 +82,7 @@ describe("InventoryPage (RSC)", () => {
     render(ui);
     expect(screen.getByRole("heading", { name: "Inventário" })).toBeInTheDocument();
     expect(screen.getByText("Mesa de Som X32")).toBeInTheDocument();
+    expect(screen.getByText("Voltou da manutenção em 17/08/2026 às 12:30")).toBeInTheDocument();
   });
 
   it("redireciona para /login quando não há contexto", async () => {
@@ -86,5 +101,19 @@ describe("InventoryPage (RSC)", () => {
     await expect(
       InventoryPage({ searchParams: Promise.resolve({}) })
     ).rejects.toThrow(/REDIRECT:\/dashboard/);
+  });
+
+  it("nao exibe nem consulta o historico para operations", async () => {
+    auth.getCurrentUserContext.mockResolvedValueOnce({
+      role: "operations",
+      userId: "u1",
+      primaryOrganization: { id: "org-1" },
+    });
+
+    const ui = await InventoryPage({ searchParams: Promise.resolve({}) });
+    const { render, screen } = await import("@testing-library/react");
+    render(ui);
+
+    expect(screen.queryByText(/Voltou da manutenção em/)).not.toBeInTheDocument();
   });
 });

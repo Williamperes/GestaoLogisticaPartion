@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { CalendarClock, ChevronRight, Package } from "lucide-react";
+import { CalendarClock, ChevronRight, History, Package } from "lucide-react";
 
 import { getCurrentUserContext } from "@/lib/auth/session";
 import {
@@ -9,7 +9,11 @@ import {
   listEquipmentCategories,
   formatPurchaseValue,
 } from "@/lib/inventory";
-import { formatDateBR } from "@/lib/dates";
+import { formatDateBR, formatDateTimeBR } from "@/lib/dates";
+import {
+  formatUnitCondition,
+  listResolvedMaintenanceHistory,
+} from "@/lib/maintenance";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { DeleteConfirmDialog } from "@/components/ui/delete-confirm-dialog";
 import { QrCodeDisplay } from "@/components/inventory/QrCodeDisplay";
@@ -36,12 +40,24 @@ export default async function InventoryDetailPage({ params, searchParams }: Prop
 
   if (!equipment) redirect("/inventory");
 
-  const [categories, allocations] = await Promise.all([
+  const canViewMaintenanceHistory = ["super_admin", "admin"].includes(context?.role ?? "");
+  const [categories, allocations, maintenanceHistory] = await Promise.all([
     context?.primaryOrganization?.id
       ? listEquipmentCategories(context.primaryOrganization.id)
       : Promise.resolve([]),
     getEquipmentAllocations(equipment.id),
+    canViewMaintenanceHistory && context?.primaryOrganization?.id
+      ? listResolvedMaintenanceHistory(context.primaryOrganization.id, equipment.id)
+      : Promise.resolve([]),
   ]);
+
+  const latestMaintenanceReturn = maintenanceHistory[0] ?? null;
+  const latestReturnByUnit = new Map<string, string>();
+  for (const record of maintenanceHistory) {
+    if (record.resolvedAt && !latestReturnByUnit.has(record.equipmentUnitId)) {
+      latestReturnByUnit.set(record.equipmentUnitId, record.resolvedAt);
+    }
+  }
 
   const canWrite = ["super_admin", "admin", "operations", "warehouse"].includes(
     context?.role ?? ""
@@ -150,6 +166,18 @@ export default async function InventoryDetailPage({ params, searchParams }: Prop
         )}
       </div>
 
+      {latestMaintenanceReturn?.resolvedAt && (
+        <div className="flex items-center gap-3 rounded-xl border border-emerald-500/30 bg-emerald-500/8 px-5 py-4">
+          <History className="h-5 w-5 shrink-0 text-emerald-700" />
+          <div>
+            <p className="text-xs font-medium text-emerald-700">Último retorno da manutenção</p>
+            <p className="mt-0.5 text-sm font-semibold">
+              {formatDateTimeBR(latestMaintenanceReturn.resolvedAt)}
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Variantes (renderiza só quando o equipamento tem variantes) */}
       {equipment.hasVariants && (
         <VariantManager
@@ -236,6 +264,11 @@ export default async function InventoryDetailPage({ params, searchParams }: Prop
                   <tr key={unit.id} className="group">
                     <td className="px-5 py-3 font-mono text-xs">
                       {unit.serial ?? <span className="text-muted-foreground">—</span>}
+                      {latestReturnByUnit.get(unit.id) && (
+                        <span className="mt-1 block font-sans text-[10px] font-medium text-emerald-700">
+                          Voltou em {formatDateTimeBR(latestReturnByUnit.get(unit.id)!)}
+                        </span>
+                      )}
                     </td>
                     {equipment.hasVariants && (
                       <td className="px-4 py-3 text-xs">
@@ -335,6 +368,41 @@ export default async function InventoryDetailPage({ params, searchParams }: Prop
             </table>
           )}
         </div>
+      )}
+
+      {canViewMaintenanceHistory && maintenanceHistory.length > 0 && (
+        <section className="overflow-hidden rounded-xl border border-border bg-card">
+          <div className="border-b border-border px-5 py-3.5">
+            <h2 className="flex items-center gap-2 text-sm font-semibold">
+              <History className="h-4 w-4 text-emerald-700" />
+              Histórico de manutenção ({maintenanceHistory.length})
+            </h2>
+          </div>
+          <ul className="divide-y divide-border">
+            {maintenanceHistory.map((record) => (
+              <li key={record.id} className="space-y-2 px-5 py-4 text-sm">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="font-semibold">
+                    Retornou em {record.resolvedAt ? formatDateTimeBR(record.resolvedAt) : "—"}
+                  </p>
+                  <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold text-amber-700">
+                    {formatUnitCondition(record.condition)}
+                  </span>
+                </div>
+                <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                  <span>Entrada: {formatDateTimeBR(record.createdAt)}</span>
+                  <span>Unidade: {record.unitSerial ?? "Sem série"}</span>
+                  {record.eventName && record.eventId ? (
+                    <Link href={`/events/${record.eventId}`} className="font-medium hover:text-amber-600">
+                      {record.eventName}
+                    </Link>
+                  ) : null}
+                </div>
+                {record.note && <p className="text-xs italic text-muted-foreground">{record.note}</p>}
+              </li>
+            ))}
+          </ul>
+        </section>
       )}
 
       {/* OSes alocando este equipamento (status ativo) */}

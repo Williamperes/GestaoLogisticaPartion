@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parseLocalDate, formatDateBR } from "@/lib/dates";
+import { parseLocalDate, formatDateBR, formatDateTimeBR } from "@/lib/dates";
 
 describe("parseLocalDate", () => {
   it("cria um Date no fuso local (sem deslocamento UTC)", () => {
@@ -26,5 +26,11 @@ describe("formatDateBR", () => {
 
   it("preserva o primeiro dia do ano", () => {
     expect(formatDateBR("2026-01-01")).toBe("01/01/2026");
+  });
+});
+
+describe("formatDateTimeBR", () => {
+  it("formata instante no fuso de Sao Paulo", () => {
+    expect(formatDateTimeBR("2026-08-17T15:30:00.000Z")).toBe("17/08/2026 às 12:30");
   });
 });
