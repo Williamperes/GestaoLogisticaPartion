@@ -120,7 +120,10 @@ describe("getEquipmentAvailability (Refactor H — overlap por datas reais)", ()
       }),
       event_equipment: () => ({
         // A reservou 3 unidades do eq-1.
-        data: [{ equipment_id: "eq-1", variant_id: null, qty: 3 }],
+        data: [{
+          equipment_id: "eq-1", variant_id: null, qty: 3,
+          bulk_returned_qty: 0, returned_at: null,
+        }],
       }),
     });
 
@@ -154,7 +157,10 @@ describe("getEquipmentAvailability (Refactor H — overlap por datas reais)", ()
         data: [{ event_id: "event-A" }],
       }),
       event_equipment: () => ({
-        data: [{ equipment_id: "eq-1", variant_id: null, qty: 3 }],
+        data: [{
+          equipment_id: "eq-1", variant_id: null, qty: 3,
+          bulk_returned_qty: 0, returned_at: null,
+        }],
       }),
     });
 
@@ -197,6 +203,68 @@ describe("getEquipmentAvailability (Refactor H — overlap por datas reais)", ()
     expect(entry?.available).toBe(5);
     expect(supabase._calls().event_dates ?? 0).toBe(0);
     expect(supabase._calls().event_equipment ?? 0).toBe(0);
+  });
+
+  it("subtrai retornos bulk parciais e totais sem alterar alocação serializada", async () => {
+    const supabase = fakeSupabase({
+      equipment: () => ({
+        data: [
+          {
+            id: "eq-bulk",
+            type: "bulk",
+            has_variants: false,
+            equipment_units: [],
+            bulk_inventory: [{ variant_id: null, total_qty: 10 }],
+            equipment_variants: [],
+          },
+          {
+            id: "eq-serial",
+            type: "serialized",
+            has_variants: false,
+            equipment_units: [
+              { id: "u1", variant_id: null, status: "available" },
+              { id: "u2", variant_id: null, status: "available" },
+              { id: "u3", variant_id: null, status: "available" },
+            ],
+            bulk_inventory: [],
+            equipment_variants: [],
+          },
+        ],
+      }),
+      event_dates: () => ({
+        data: [{ event_id: "event-A" }, { event_id: "event-B" }],
+      }),
+      event_equipment: () => ({
+        data: [
+          {
+            equipment_id: "eq-bulk", variant_id: null, qty: 6,
+            bulk_returned_qty: 2, returned_at: null,
+          },
+          {
+            equipment_id: "eq-bulk", variant_id: null, qty: 4,
+            bulk_returned_qty: 4, returned_at: null,
+          },
+          {
+            equipment_id: "eq-serial", variant_id: null, qty: 2,
+            bulk_returned_qty: 0, returned_at: null,
+          },
+        ],
+      }),
+    });
+    mocks.createSupabaseAdminClient.mockReturnValue(supabase);
+
+    const result = await getEquipmentAvailability("org-1", ["2026-08-20"]);
+
+    expect(result.get(availabilityKey("eq-bulk", null))).toEqual({
+      total: 10,
+      allocated: 4,
+      available: 6,
+    });
+    expect(result.get(availabilityKey("eq-serial", null))).toEqual({
+      total: 3,
+      allocated: 2,
+      available: 1,
+    });
   });
 
   it("não conta event_equipment com returned_at setado", async () => {

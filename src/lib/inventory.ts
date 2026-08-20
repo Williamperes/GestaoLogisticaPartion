@@ -476,7 +476,7 @@ export async function getEquipmentAvailability(
     if (overlappingEventIds.size > 0) {
       const { data: allocData, error: allocErr } = await supabase
         .from("event_equipment")
-        .select("equipment_id, variant_id, qty, returned_at")
+        .select("equipment_id, variant_id, qty, bulk_returned_qty, returned_at")
         .in("event_id", Array.from(overlappingEventIds))
         .is("returned_at", null);
       if (allocErr) throw allocErr;
@@ -484,7 +484,8 @@ export async function getEquipmentAvailability(
       for (const row of allocData ?? []) {
         const key = availabilityKey(row.equipment_id, row.variant_id ?? null);
         const prev = allocMap.get(key) ?? 0;
-        allocMap.set(key, prev + (row.qty ?? 0));
+        const allocatedQty = (row.qty ?? 0) - (row.bulk_returned_qty ?? 0);
+        allocMap.set(key, prev + allocatedQty);
       }
     }
   }

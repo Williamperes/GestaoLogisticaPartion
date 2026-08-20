@@ -112,6 +112,10 @@ describe("listExtraMaterialCandidates", () => {
       { method: "eq", args: ["organization_id", "org-1"] },
       { method: "in", args: ["status", ["ready_to_load", "in_field"]] },
     ]));
+    expect(equipmentQuery._calls).toContainEqual({
+      method: "eq",
+      args: ["organization_id", "org-1"],
+    });
   });
 });
 
@@ -162,5 +166,7 @@ describe("listExtraMaterialLog", () => {
       { method: "eq", args: ["events.organization_id", "org-1"] },
       { method: "order", args: ["created_at", { ascending: false }] },
     ]));
+    const selectCall = logQuery._calls.find((call) => call.method === "select");
+    expect(selectCall?.args[0]).toContain("events!inner");
   });
 });
