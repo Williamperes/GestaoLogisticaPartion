@@ -371,7 +371,15 @@ begin
     raise exception 'EXTRA_NOT_AVAILABLE' using errcode = 'P0001';
   end if;
 
-  select coalesce(sum(ee.qty), 0)::integer
+  select coalesce(
+    sum(
+      case
+        when ee.returned_at is not null then 0
+        else ee.qty - ee.bulk_returned_qty
+      end
+    ),
+    0
+  )::integer
     into allocated_qty
   from public.event_equipment ee
   join public.events active_event on active_event.id = ee.event_id
