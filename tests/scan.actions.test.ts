@@ -285,12 +285,24 @@ const WAREHOUSE_CONTEXT = {
   role: "warehouse",
   primaryOrganization: { id: "org-1" },
 };
+const EXTRA_EVENT_ID = "11111111-1111-4111-8111-111111111111";
+const EXTRA_EQUIPMENT_ID = "22222222-2222-4222-8222-222222222222";
+const EXTRA_VARIANT_ID = "33333333-3333-4333-8333-333333333333";
 
 function rpcResponse(data: unknown, error: unknown = null) {
   const single = vi.fn().mockResolvedValue({ data, error });
   mocks.rpc.mockReturnValue({ single });
   return single;
 }
+
+const unsafeRegisterExtraSerialized = registerExtraSerializedMaterial as unknown as (
+  eventId: unknown,
+  qrCode: unknown,
+  reason: unknown
+) => Promise<unknown>;
+const unsafeRegisterExtraBulk = registerExtraBulkMaterial as unknown as (
+  input: unknown
+) => Promise<unknown>;
 
 describe("registro de material extra", () => {
   beforeEach(() => {
@@ -303,11 +315,149 @@ describe("registro de material extra", () => {
     mocks.createSupabaseServerClient.mockResolvedValue({ rpc: mocks.rpc });
   });
 
+  it.each([
+    [null, "QR-1", "Reserva", "Sem acesso a esta OS."],
+    [undefined, "QR-1", "Reserva", "Sem acesso a esta OS."],
+    [42, "QR-1", "Reserva", "Sem acesso a esta OS."],
+    ["event-malformado", "QR-1", "Reserva", "Sem acesso a esta OS."],
+    [EXTRA_EVENT_ID, null, "Reserva", "QR vazio"],
+    [EXTRA_EVENT_ID, undefined, "Reserva", "QR vazio"],
+    [EXTRA_EVENT_ID, { code: "QR-1" }, "Reserva", "QR vazio"],
+    [EXTRA_EVENT_ID, "QR-1", null, "Informe o motivo do material extra."],
+    [EXTRA_EVENT_ID, "QR-1", undefined, "Informe o motivo do material extra."],
+    [EXTRA_EVENT_ID, "QR-1", ["Reserva"], "Informe o motivo do material extra."],
+  ])(
+    "rejeita payload serializado adulterado %# sem lançar",
+    async (eventId, qrCode, reason, error) => {
+      await expect(
+        unsafeRegisterExtraSerialized(eventId, qrCode, reason)
+      ).resolves.toEqual({ ok: false, error });
+      expect(mocks.getCurrentUserContext).not.toHaveBeenCalled();
+      expect(mocks.getEquipmentUnitByQrCode).not.toHaveBeenCalled();
+      expect(mocks.rpc).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each([
+    [null, "Dados de material extra inválidos."],
+    [undefined, "Dados de material extra inválidos."],
+    ["payload", "Dados de material extra inválidos."],
+    [[], "Dados de material extra inválidos."],
+    [{}, "Sem acesso a esta OS."],
+    [{ eventId: null }, "Sem acesso a esta OS."],
+    [{ eventId: 42 }, "Sem acesso a esta OS."],
+    [{ eventId: "event-malformado" }, "Sem acesso a esta OS."],
+    [
+      {
+        eventId: EXTRA_EVENT_ID,
+        equipmentId: null,
+        variantId: null,
+        qty: 1,
+        reason: "Reserva",
+      },
+      "Material indisponível.",
+    ],
+    [
+      {
+        eventId: EXTRA_EVENT_ID,
+        equipmentId: undefined,
+        variantId: null,
+        qty: 1,
+        reason: "Reserva",
+      },
+      "Material indisponível.",
+    ],
+    [
+      {
+        eventId: EXTRA_EVENT_ID,
+        equipmentId: "equipment-malformado",
+        variantId: null,
+        qty: 1,
+        reason: "Reserva",
+      },
+      "Material indisponível.",
+    ],
+    [
+      {
+        eventId: EXTRA_EVENT_ID,
+        equipmentId: EXTRA_EQUIPMENT_ID,
+        variantId: 42,
+        qty: 1,
+        reason: "Reserva",
+      },
+      "Material indisponível.",
+    ],
+    [
+      {
+        eventId: EXTRA_EVENT_ID,
+        equipmentId: EXTRA_EQUIPMENT_ID,
+        variantId: undefined,
+        qty: 1,
+        reason: "Reserva",
+      },
+      "Material indisponível.",
+    ],
+    [
+      {
+        eventId: EXTRA_EVENT_ID,
+        equipmentId: EXTRA_EQUIPMENT_ID,
+        variantId: "variant-malformada",
+        qty: 1,
+        reason: "Reserva",
+      },
+      "Material indisponível.",
+    ],
+    [
+      {
+        eventId: EXTRA_EVENT_ID,
+        equipmentId: EXTRA_EQUIPMENT_ID,
+        variantId: null,
+        qty: undefined,
+        reason: "Reserva",
+      },
+      "Quantidade inválida.",
+    ],
+    [
+      {
+        eventId: EXTRA_EVENT_ID,
+        equipmentId: EXTRA_EQUIPMENT_ID,
+        variantId: null,
+        qty: "3",
+        reason: "Reserva",
+      },
+      "Quantidade inválida.",
+    ],
+    [
+      {
+        eventId: EXTRA_EVENT_ID,
+        equipmentId: EXTRA_EQUIPMENT_ID,
+        variantId: null,
+        qty: 1,
+        reason: undefined,
+      },
+      "Informe o motivo do material extra.",
+    ],
+    [
+      {
+        eventId: EXTRA_EVENT_ID,
+        equipmentId: EXTRA_EQUIPMENT_ID,
+        variantId: null,
+        qty: 1,
+        reason: null,
+      },
+      "Informe o motivo do material extra.",
+    ],
+  ])("rejeita payload bulk adulterado %# sem lançar", async (input, error) => {
+    await expect(unsafeRegisterExtraBulk(input)).resolves.toEqual({ ok: false, error });
+    expect(mocks.getCurrentUserContext).not.toHaveBeenCalled();
+    expect(mocks.rpc).not.toHaveBeenCalled();
+  });
+
   it("rejeita usuário não autenticado antes de criar um cliente Supabase", async () => {
     mocks.getCurrentUserContext.mockResolvedValue(null);
 
     await expect(
-      registerExtraSerializedMaterial("event-1", "QR-1", "Reserva")
+      registerExtraSerializedMaterial(EXTRA_EVENT_ID, "QR-1", "Reserva")
     ).resolves.toEqual({ ok: false, error: "Não autenticado" });
     expect(mocks.createSupabaseAdminClient).not.toHaveBeenCalled();
     expect(mocks.createSupabaseServerClient).not.toHaveBeenCalled();
@@ -321,8 +471,8 @@ describe("registro de material extra", () => {
 
     await expect(
       registerExtraBulkMaterial({
-        eventId: "event-1",
-        equipmentId: "equipment-1",
+        eventId: EXTRA_EVENT_ID,
+        equipmentId: EXTRA_EQUIPMENT_ID,
         variantId: null,
         qty: 1,
         reason: "Reserva",
@@ -339,13 +489,13 @@ describe("registro de material extra", () => {
     mocks.teamMemberHasEventAccess.mockResolvedValue(false);
 
     await expect(
-      registerExtraSerializedMaterial("event-1", "QR-1", "Reserva")
+      registerExtraSerializedMaterial(EXTRA_EVENT_ID, "QR-1", "Reserva")
     ).resolves.toEqual({ ok: false, error: "Sem acesso a esta OS." });
     expect(mocks.getTeamMemberByUserId).toHaveBeenCalledWith(
       "warehouse-user-1",
       "org-1"
     );
-    expect(mocks.teamMemberHasEventAccess).toHaveBeenCalledWith("member-1", "event-1");
+    expect(mocks.teamMemberHasEventAccess).toHaveBeenCalledWith("member-1", EXTRA_EVENT_ID);
     expect(mocks.createSupabaseAdminClient).not.toHaveBeenCalled();
     expect(mocks.createSupabaseServerClient).not.toHaveBeenCalled();
   });
@@ -357,14 +507,14 @@ describe("registro de material extra", () => {
     });
 
     await expect(
-      registerExtraSerializedMaterial("event-1", "QR-1", "Reserva")
+      registerExtraSerializedMaterial(EXTRA_EVENT_ID, "QR-1", "Reserva")
     ).resolves.toEqual({ ok: false, error: "Sem acesso a esta OS." });
     expect(mocks.getTeamMemberByUserId).not.toHaveBeenCalled();
   });
 
   it("rejeita motivo vazio depois de normalizar espaços", async () => {
     await expect(
-      registerExtraSerializedMaterial("event-1", "QR-1", "   ")
+      registerExtraSerializedMaterial(EXTRA_EVENT_ID, "QR-1", "   ")
     ).resolves.toEqual({
       ok: false,
       error: "Informe o motivo do material extra.",
@@ -378,8 +528,8 @@ describe("registro de material extra", () => {
     async (qty) => {
       await expect(
         registerExtraBulkMaterial({
-          eventId: "event-1",
-          equipmentId: "equipment-1",
+          eventId: EXTRA_EVENT_ID,
+          equipmentId: EXTRA_EQUIPMENT_ID,
           variantId: null,
           qty,
           reason: "Reserva",
@@ -399,7 +549,7 @@ describe("registro de material extra", () => {
     });
 
     const result = await registerExtraSerializedMaterial(
-      "  event-1  ",
+      `  ${EXTRA_EVENT_ID}  `,
       "  QR-123  ",
       "  Cliente pediu reforço  "
     );
@@ -408,7 +558,7 @@ describe("registro de material extra", () => {
     expect(mocks.getEquipmentUnitByQrCode).toHaveBeenCalledWith("QR-123");
     expect(mocks.rpc).toHaveBeenCalledOnce();
     expect(mocks.rpc).toHaveBeenCalledWith("register_extra_serialized_material", {
-      p_event_id: "event-1",
+      p_event_id: EXTRA_EVENT_ID,
       p_equipment_unit_id: "unit-1",
       p_reason: "Cliente pediu reforço",
     });
@@ -422,9 +572,9 @@ describe("registro de material extra", () => {
       extraQty: 1,
     });
     expect(mocks.revalidatePath.mock.calls).toEqual([
-      ["/scan/load/event-1"],
-      ["/scan/return/event-1"],
-      ["/events/event-1"],
+      [`/scan/load/${EXTRA_EVENT_ID}`],
+      [`/scan/return/${EXTRA_EVENT_ID}`],
+      [`/events/${EXTRA_EVENT_ID}`],
     ]);
   });
 
@@ -438,8 +588,8 @@ describe("registro de material extra", () => {
     });
 
     const result = await registerExtraBulkMaterial({
-      eventId: "  event-1 ",
-      equipmentId: " equipment-2  ",
+      eventId: `  ${EXTRA_EVENT_ID} `,
+      equipmentId: ` ${EXTRA_EQUIPMENT_ID}  `,
       variantId: null,
       qty: 3,
       reason: "  Reserva técnica ",
@@ -447,8 +597,8 @@ describe("registro de material extra", () => {
 
     expect(mocks.rpc).toHaveBeenCalledOnce();
     expect(mocks.rpc).toHaveBeenCalledWith("register_extra_bulk_material", {
-      p_event_id: "event-1",
-      p_equipment_id: "equipment-2",
+      p_event_id: EXTRA_EVENT_ID,
+      p_equipment_id: EXTRA_EQUIPMENT_ID,
       p_variant_id: null,
       p_qty: 3,
       p_reason: "Reserva técnica",
@@ -471,16 +621,16 @@ describe("registro de material extra", () => {
     });
 
     await registerExtraBulkMaterial({
-      eventId: "event-1",
-      equipmentId: "equipment-2",
-      variantId: "  variant-1  ",
+      eventId: EXTRA_EVENT_ID,
+      equipmentId: EXTRA_EQUIPMENT_ID,
+      variantId: `  ${EXTRA_VARIANT_ID}  `,
       qty: 1,
       reason: "Reserva",
     });
 
     expect(mocks.rpc).toHaveBeenCalledWith(
       "register_extra_bulk_material",
-      expect.objectContaining({ p_variant_id: "variant-1" })
+      expect.objectContaining({ p_variant_id: EXTRA_VARIANT_ID })
     );
   });
 
@@ -495,7 +645,7 @@ describe("registro de material extra", () => {
     rpcResponse(null, { message: code });
 
     await expect(
-      registerExtraSerializedMaterial("event-1", "QR-1", "Reserva")
+      registerExtraSerializedMaterial(EXTRA_EVENT_ID, "QR-1", "Reserva")
     ).resolves.toEqual({ ok: false, error: message });
   });
 
@@ -503,7 +653,7 @@ describe("registro de material extra", () => {
     rpcResponse(null, { message: "database unavailable" });
 
     await expect(
-      registerExtraSerializedMaterial("event-1", "QR-1", "Reserva")
+      registerExtraSerializedMaterial(EXTRA_EVENT_ID, "QR-1", "Reserva")
     ).resolves.toEqual({ ok: false, error: "database unavailable" });
   });
 });

@@ -56,6 +56,23 @@ const EXTRA_MATERIAL_ERRORS: Record<string, string> = {
   EXTRA_NOT_AVAILABLE: "Material indisponível.",
   EXTRA_UNIT_CONFLICT: "Esta unidade já está carregada em outra OS.",
 };
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function normalizeRequiredText(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim();
+  return normalized || null;
+}
+
+function normalizeUuid(value: unknown): string | null {
+  const normalized = normalizeRequiredText(value);
+  return normalized && UUID_PATTERN.test(normalized) ? normalized : null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
 async function authorizeExtraMaterial(eventId: string): Promise<ExtraMaterialResult | null> {
   const context = await getCurrentUserContext();
@@ -106,17 +123,19 @@ export async function registerExtraSerializedMaterial(
   qrCode: string,
   reason: string
 ): Promise<ExtraMaterialResult> {
-  const normalizedEventId = eventId.trim();
-  const authorizationError = await authorizeExtraMaterial(normalizedEventId);
-  if (authorizationError) return authorizationError;
+  const normalizedEventId = normalizeUuid(eventId);
+  if (!normalizedEventId) return { ok: false, error: "Sem acesso a esta OS." };
 
-  const normalizedReason = reason.trim();
+  const normalizedReason = normalizeRequiredText(reason);
   if (!normalizedReason) {
     return { ok: false, error: "Informe o motivo do material extra." };
   }
 
-  const normalizedQrCode = qrCode.trim();
+  const normalizedQrCode = normalizeRequiredText(qrCode);
   if (!normalizedQrCode) return { ok: false, error: "QR vazio" };
+
+  const authorizationError = await authorizeExtraMaterial(normalizedEventId);
+  if (authorizationError) return authorizationError;
 
   const unit = await getEquipmentUnitByQrCode(normalizedQrCode);
   if (!unit) return { ok: false, error: "QR não encontrado" };
@@ -141,19 +160,28 @@ export async function registerExtraSerializedMaterial(
 export async function registerExtraBulkMaterial(
   input: ExtraBulkInput
 ): Promise<ExtraMaterialResult> {
-  const eventId = input.eventId.trim();
-  const authorizationError = await authorizeExtraMaterial(eventId);
-  if (authorizationError) return authorizationError;
+  if (!isRecord(input)) {
+    return { ok: false, error: "Dados de material extra inválidos." };
+  }
 
-  const reason = input.reason.trim();
+  const eventId = normalizeUuid(input.eventId);
+  if (!eventId) return { ok: false, error: "Sem acesso a esta OS." };
+
+  const reason = normalizeRequiredText(input.reason);
   if (!reason) return { ok: false, error: "Informe o motivo do material extra." };
   if (!Number.isSafeInteger(input.qty) || input.qty <= 0) {
     return { ok: false, error: "Quantidade inválida." };
   }
 
-  const equipmentId = input.equipmentId.trim();
+  const equipmentId = normalizeUuid(input.equipmentId);
   if (!equipmentId) return { ok: false, error: "Material indisponível." };
-  const variantId = input.variantId?.trim() || null;
+  const variantId = input.variantId === null ? null : normalizeUuid(input.variantId);
+  if (input.variantId !== null && !variantId) {
+    return { ok: false, error: "Material indisponível." };
+  }
+
+  const authorizationError = await authorizeExtraMaterial(eventId);
+  if (authorizationError) return authorizationError;
 
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase
