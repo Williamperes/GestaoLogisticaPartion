@@ -10,7 +10,9 @@ import { scanFeedbackError, scanFeedbackSuccess } from "@/lib/scanFeedback";
 import {
   finalizeReturn,
   manualReturnDefectUnit,
+  manualReturnBulk,
   manualReturnUnit,
+  manualUnreturnBulk,
   manualUnreturnUnit,
   scanReturnDefectUnit,
   scanReturnUnit,
@@ -24,6 +26,7 @@ interface Item {
   id: string;
   equipmentName: string;
   variantLabel: string | null;
+  equipmentType: "serialized" | "bulk";
   loadedUnitsCount: number;
   returnedUnitsCount: number;
 }
@@ -69,6 +72,22 @@ export function ReturnScanClient({ eventId, eventStatus, initialItems }: ReturnS
       prev.map((item) =>
         item.id === eeId
           ? { ...item, returnedUnitsCount: Math.max(0, item.returnedUnitsCount + delta) }
+          : item
+      )
+    );
+  }
+
+  function applyReturnedCount(eeId: string, returnedUnitsCount: number) {
+    setItems((prev) =>
+      prev.map((item) =>
+        item.id === eeId
+          ? {
+              ...item,
+              returnedUnitsCount: Math.min(
+                item.loadedUnitsCount,
+                Math.max(0, returnedUnitsCount)
+              ),
+            }
           : item
       )
     );
@@ -122,7 +141,11 @@ export function ReturnScanClient({ eventId, eventStatus, initialItems }: ReturnS
     setBusy(true);
     try {
       const result =
-        delta === 1
+        item.equipmentType === "bulk"
+          ? delta === 1
+            ? await manualReturnBulk(eventId, item.id, 1)
+            : await manualUnreturnBulk(eventId, item.id, 1)
+          : delta === 1
           ? await manualReturnUnit(eventId, item.id)
           : await manualUnreturnUnit(eventId, item.id);
       if (!result.ok) {
@@ -131,7 +154,11 @@ export function ReturnScanClient({ eventId, eventStatus, initialItems }: ReturnS
         return;
       }
       scanFeedbackSuccess();
-      applyDelta(item.id, delta);
+      if (item.equipmentType === "bulk" && result.returnedUnitsCount !== undefined) {
+        applyReturnedCount(item.id, result.returnedUnitsCount);
+      } else {
+        applyDelta(item.id, delta);
+      }
     } finally {
       setBusy(false);
     }
@@ -255,15 +282,17 @@ export function ReturnScanClient({ eventId, eventStatus, initialItems }: ReturnS
                   {item.variantLabel ? ` · ${item.variantLabel}` : ""}
                 </span>
                 <div className="flex shrink-0 items-center gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => setDefectTarget({ kind: "manual", item })}
-                    aria-label="Marcar defeito"
-                    title="Marcar defeito"
-                    className="flex h-7 w-7 items-center justify-center rounded-lg border border-amber-500/30 bg-amber-500/5 text-amber-600 transition hover:bg-amber-500/15"
-                  >
-                    <AlertTriangle className="h-3.5 w-3.5" />
-                  </button>
+                  {item.equipmentType === "serialized" && (
+                    <button
+                      type="button"
+                      onClick={() => setDefectTarget({ kind: "manual", item })}
+                      aria-label="Marcar defeito"
+                      title="Marcar defeito"
+                      className="flex h-7 w-7 items-center justify-center rounded-lg border border-amber-500/30 bg-amber-500/5 text-amber-600 transition hover:bg-amber-500/15"
+                    >
+                      <AlertTriangle className="h-3.5 w-3.5" />
+                    </button>
+                  )}
                   <Counter item={item} />
                 </div>
               </li>

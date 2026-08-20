@@ -2,6 +2,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, act, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { createElement } from "react";
 
 // Mock do QrScanner: expõe o onResult para simular um "scan" sem câmera.
 let scannerOnResult: ((text: string) => void) | null = null;
@@ -16,8 +17,7 @@ vi.mock("@/components/inventory/QrScanner", () => ({
   }) => {
     scannerOnResult = onResult;
     scannerOnError = onError;
-    const React = require("react");
-    return React.createElement("button", {
+    return createElement("button", {
       type: "button",
       "data-testid": "fake-scan",
       onClick: () => onResult("QR-SCAN"),
@@ -41,16 +41,39 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: routerPush }),
 }));
 
-const scanReturnUnit = vi.fn(async () => ({ ok: true, eventEquipmentId: "e1" }));
-const unscanReturnUnit = vi.fn(async () => ({ ok: true, eventEquipmentId: "e1" }));
-const manualReturnUnit = vi.fn(async () => ({ ok: true }));
-const manualUnreturnUnit = vi.fn(async () => ({ ok: true }));
-const finalizeReturn = vi.fn(async () => ({ ok: true }));
+interface ScanActionResult {
+  ok: boolean;
+  error?: string;
+  eventEquipmentId?: string;
+  returnedUnitsCount?: number;
+}
+
+const scanReturnUnit = vi.fn(async (): Promise<ScanActionResult> => ({
+  ok: true,
+  eventEquipmentId: "e1",
+}));
+const unscanReturnUnit = vi.fn(async (): Promise<ScanActionResult> => ({
+  ok: true,
+  eventEquipmentId: "e1",
+}));
+const manualReturnUnit = vi.fn(async (): Promise<ScanActionResult> => ({ ok: true }));
+const manualUnreturnUnit = vi.fn(async (): Promise<ScanActionResult> => ({ ok: true }));
+const manualReturnBulk = vi.fn(async (): Promise<ScanActionResult> => ({
+  ok: true,
+  returnedUnitsCount: 1,
+}));
+const manualUnreturnBulk = vi.fn(async (): Promise<ScanActionResult> => ({
+  ok: true,
+  returnedUnitsCount: 0,
+}));
+const finalizeReturn = vi.fn(async (): Promise<ScanActionResult> => ({ ok: true }));
 vi.mock("@/app/(dashboard)/scan/actions", () => ({
   scanReturnUnit: (...a: unknown[]) => scanReturnUnit(...(a as [])),
   unscanReturnUnit: (...a: unknown[]) => unscanReturnUnit(...(a as [])),
   manualReturnUnit: (...a: unknown[]) => manualReturnUnit(...(a as [])),
   manualUnreturnUnit: (...a: unknown[]) => manualUnreturnUnit(...(a as [])),
+  manualReturnBulk: (...a: unknown[]) => manualReturnBulk(...(a as [])),
+  manualUnreturnBulk: (...a: unknown[]) => manualUnreturnBulk(...(a as [])),
   finalizeReturn: (...a: unknown[]) => finalizeReturn(...(a as [])),
 }));
 
@@ -58,8 +81,8 @@ import { ReturnScanClient } from "@/app/(dashboard)/scan/return/[eventId]/Return
 import { scanFeedbackSuccess, scanFeedbackError } from "@/lib/scanFeedback";
 
 const items = [
-  { id: "e1", equipmentName: "Cabo XLR", variantLabel: "10m", loadedUnitsCount: 3, returnedUnitsCount: 1 },
-  { id: "e2", equipmentName: "Microfone", variantLabel: null, loadedUnitsCount: 2, returnedUnitsCount: 2 },
+  { id: "e1", equipmentName: "Cabo XLR", variantLabel: "10m", equipmentType: "serialized" as const, loadedUnitsCount: 3, returnedUnitsCount: 1 },
+  { id: "e2", equipmentName: "Microfone", variantLabel: null, equipmentType: "serialized" as const, loadedUnitsCount: 2, returnedUnitsCount: 2 },
 ];
 
 beforeEach(() => {
@@ -70,6 +93,8 @@ beforeEach(() => {
   unscanReturnUnit.mockResolvedValue({ ok: true, eventEquipmentId: "e1" });
   manualReturnUnit.mockResolvedValue({ ok: true });
   manualUnreturnUnit.mockResolvedValue({ ok: true });
+  manualReturnBulk.mockResolvedValue({ ok: true, returnedUnitsCount: 1 });
+  manualUnreturnBulk.mockResolvedValue({ ok: true, returnedUnitsCount: 0 });
   finalizeReturn.mockResolvedValue({ ok: true });
 });
 
@@ -168,6 +193,102 @@ describe("ReturnScanClient — manual counter", () => {
     await waitFor(() => expect(toastError).toHaveBeenCalledWith("Falha"));
     expect(screen.getByText("3/5 unidades")).toBeInTheDocument();
   });
+
+  it("despacha lote para a action bulk e mantém pendente até 5/5", async () => {
+    const user = userEvent.setup();
+    const bulkItems = [
+      {
+        id: "ee-bulk",
+        equipmentName: "Cabo XLR",
+        variantLabel: null,
+        equipmentType: "bulk" as const,
+        loadedUnitsCount: 5,
+        returnedUnitsCount: 0,
+      },
+    ];
+    render(<ReturnScanClient eventId="event-1" eventStatus="in_field" initialItems={bulkItems} />);
+
+    await user.click(screen.getByRole("button", { name: "Bipar 1" }));
+
+    await waitFor(() =>
+      expect(manualReturnBulk).toHaveBeenCalledWith("event-1", "ee-bulk", 1)
+    );
+    expect(manualReturnUnit).not.toHaveBeenCalled();
+    expect(screen.getByText("1/5")).toBeInTheDocument();
+    expect(screen.getByText("Pendentes")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Finalizar OS/ })).not.toBeInTheDocument();
+  });
+
+  it("usa a contagem absoluta devolvida pela action ao desfazer lote", async () => {
+    const user = userEvent.setup();
+    manualUnreturnBulk.mockResolvedValueOnce({ ok: true, returnedUnitsCount: 2 });
+    const bulkItems = [
+      {
+        id: "ee-bulk",
+        equipmentName: "Cabo XLR",
+        variantLabel: null,
+        equipmentType: "bulk" as const,
+        loadedUnitsCount: 5,
+        returnedUnitsCount: 4,
+      },
+    ];
+    render(<ReturnScanClient eventId="event-1" eventStatus="in_field" initialItems={bulkItems} />);
+
+    await user.click(screen.getByRole("button", { name: "Desbipar 1" }));
+
+    await waitFor(() =>
+      expect(manualUnreturnBulk).toHaveBeenCalledWith("event-1", "ee-bulk", 1)
+    );
+    expect(screen.getByText("2/5")).toBeInTheDocument();
+  });
+
+  it("libera a finalização apenas quando o lote chega a 5/5", async () => {
+    const user = userEvent.setup();
+    manualReturnBulk.mockResolvedValueOnce({ ok: true, returnedUnitsCount: 5 });
+    render(
+      <ReturnScanClient
+        eventId="event-1"
+        eventStatus="in_field"
+        initialItems={[
+          {
+            id: "ee-bulk",
+            equipmentName: "Cabo XLR",
+            variantLabel: null,
+            equipmentType: "bulk",
+            loadedUnitsCount: 5,
+            returnedUnitsCount: 4,
+          },
+        ]}
+      />
+    );
+
+    expect(screen.queryByRole("button", { name: /Finalizar OS/ })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Bipar 1" }));
+
+    await waitFor(() => expect(screen.getByText("5/5")).toBeInTheDocument());
+    expect(screen.getByRole("button", { name: /Finalizar OS/ })).toBeEnabled();
+  });
+
+  it("não oferece defeito manual para lote", () => {
+    render(
+      <ReturnScanClient
+        eventId="event-1"
+        eventStatus="in_field"
+        initialItems={[
+          {
+            id: "ee-bulk",
+            equipmentName: "Cabo XLR",
+            variantLabel: null,
+            equipmentType: "bulk",
+            loadedUnitsCount: 5,
+            returnedUnitsCount: 0,
+          },
+        ]}
+      />
+    );
+
+    expect(screen.queryByRole("button", { name: "Marcar defeito" })).not.toBeInTheDocument();
+  });
 });
 
 describe("ReturnScanClient — modo e erro de scanner", () => {
@@ -215,7 +336,7 @@ describe("ReturnScanClient — modo e erro de scanner", () => {
 
 describe("ReturnScanClient — finalizar OS", () => {
   const allReturned = [
-    { id: "e1", equipmentName: "Cabo XLR", variantLabel: null, loadedUnitsCount: 2, returnedUnitsCount: 2 },
+    { id: "e1", equipmentName: "Cabo XLR", variantLabel: null, equipmentType: "serialized" as const, loadedUnitsCount: 2, returnedUnitsCount: 2 },
   ];
 
   it("in_field: botão conclui a OS, navega e dá toast", async () => {

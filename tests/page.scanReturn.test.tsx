@@ -1,6 +1,10 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
+const mocks = vi.hoisted(() => ({
+  returnScanClient: vi.fn(() => null),
+}));
+
 vi.mock("next/navigation", () => ({
   redirect: vi.fn((u: string) => {
     throw new Error("REDIRECT:" + u);
@@ -26,7 +30,7 @@ vi.mock("@/lib/team", async (o) => ({
 }));
 
 vi.mock("@/app/(dashboard)/scan/return/[eventId]/ReturnScanClient", () => ({
-  ReturnScanClient: () => null,
+  ReturnScanClient: mocks.returnScanClient,
 }));
 
 import ScanReturnPage from "@/app/(dashboard)/scan/return/[eventId]/page";
@@ -42,17 +46,18 @@ const hasAccess = vi.mocked(teamMemberHasEventAccess);
 const eventFixture = {
   id: "ev-1",
   name: "Show Sul",
+  status: "in_field",
   equipment: [
-    { id: "ee1", equipmentName: "Mesa", variantLabel: null, loadedUnitsCount: 2, returnedUnitsCount: 0 },
-    { id: "ee2", equipmentName: "Caixa", variantLabel: null, loadedUnitsCount: 0, returnedUnitsCount: 0 },
+    { id: "ee1", equipmentName: "Mesa", variantLabel: null, equipmentType: "serialized", loadedUnitsCount: 2, returnedUnitsCount: 0 },
+    { id: "ee2", equipmentName: "Caixa", variantLabel: null, equipmentType: "bulk", loadedUnitsCount: 0, returnedUnitsCount: 0 },
   ],
-} as never;
+};
 
 describe("ScanReturnPage", () => {
   beforeEach(() => vi.clearAllMocks());
 
   it("renderiza o cabeçalho de retorno do evento (admin)", async () => {
-    getEvent.mockResolvedValue(eventFixture);
+    getEvent.mockResolvedValue(eventFixture as never);
     getCtx.mockResolvedValue({ role: "admin", userId: "u1", primaryOrganization: { id: "org-1" } } as never);
 
     const ui = await ScanReturnPage({ params: Promise.resolve({ eventId: "ev-1" }) });
@@ -70,12 +75,53 @@ describe("ScanReturnPage", () => {
   });
 
   it("warehouse sem acesso à OS é redirecionado", async () => {
-    getEvent.mockResolvedValue(eventFixture);
+    getEvent.mockResolvedValue(eventFixture as never);
     getCtx.mockResolvedValue({ role: "warehouse", userId: "u1", primaryOrganization: { id: "org-1" } } as never);
     getMember.mockResolvedValue({ id: "m-1" } as never);
     hasAccess.mockResolvedValue(false);
     await expect(
       ScanReturnPage({ params: Promise.resolve({ eventId: "ev-1" }) })
     ).rejects.toThrow(/REDIRECT:\/events/);
+  });
+
+  it("propaga o tipo e os contadores agregados de lote para o client", async () => {
+    getEvent.mockResolvedValue({
+      ...eventFixture,
+      equipment: [
+        {
+          id: "ee-bulk",
+          equipmentName: "Cabo XLR",
+          variantLabel: null,
+          equipmentType: "bulk",
+          loadedUnitsCount: 5,
+          returnedUnitsCount: 2,
+        },
+      ],
+    } as never);
+    getCtx.mockResolvedValue({
+      role: "admin",
+      userId: "u1",
+      primaryOrganization: { id: "org-1" },
+    } as never);
+
+    const ui = await ScanReturnPage({ params: Promise.resolve({ eventId: "ev-1" }) });
+    const { render } = await import("@testing-library/react");
+    render(ui);
+
+    expect(mocks.returnScanClient).toHaveBeenCalledWith(
+      expect.objectContaining({
+        initialItems: [
+          {
+            id: "ee-bulk",
+            equipmentName: "Cabo XLR",
+            variantLabel: null,
+            equipmentType: "bulk",
+            loadedUnitsCount: 5,
+            returnedUnitsCount: 2,
+          },
+        ],
+      }),
+      undefined
+    );
   });
 });

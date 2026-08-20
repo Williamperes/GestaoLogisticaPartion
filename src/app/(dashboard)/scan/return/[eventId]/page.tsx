@@ -29,6 +29,7 @@ export default async function ScanReturnPage({ params }: { params: Promise<{ eve
       id: e.id,
       equipmentName: e.equipmentName,
       variantLabel: e.variantLabel,
+      equipmentType: e.equipmentType,
       loadedUnitsCount: e.loadedUnitsCount,
       returnedUnitsCount: e.returnedUnitsCount,
     }));

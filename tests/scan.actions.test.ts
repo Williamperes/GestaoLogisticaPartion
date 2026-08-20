@@ -39,9 +39,12 @@ vi.mock("@/lib/team", async () => {
 vi.mock("next/cache", () => ({ revalidatePath: mocks.revalidatePath }));
 
 import {
+  finalizeReturn,
   manualLoadUnit,
+  manualReturnBulk,
   manualReturnUnit,
   manualUnloadUnit,
+  manualUnreturnBulk,
   manualUnreturnUnit,
   registerExtraBulkMaterial,
   registerExtraSerializedMaterialByUnitId,
@@ -764,6 +767,222 @@ describe("registro de material extra", () => {
     await expect(
       registerExtraSerializedMaterial(EXTRA_EVENT_ID, "QR-1", "Reserva")
     ).resolves.toEqual({ ok: false, error: "database unavailable" });
+  });
+});
+
+const BULK_EVENT_ID = "55555555-5555-4555-8555-555555555555";
+const BULK_EVENT_EQUIPMENT_ID = "66666666-6666-4666-8666-666666666666";
+
+const unsafeManualReturnBulk = manualReturnBulk as unknown as (
+  eventId: unknown,
+  eventEquipmentId: unknown,
+  qty: unknown
+) => Promise<unknown>;
+
+describe("devolução manual de material em lote", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.rpc.mockReset();
+    mocks.getCurrentUserContext.mockResolvedValue(WAREHOUSE_CONTEXT);
+    mocks.getTeamMemberByUserId.mockResolvedValue({ id: "member-1" });
+    mocks.teamMemberHasEventAccess.mockResolvedValue(true);
+    mocks.createSupabaseServerClient.mockResolvedValue({ rpc: mocks.rpc });
+  });
+
+  it.each([0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1])(
+    "rejeita delta inválido antes de autorizar ou chamar a RPC: %s",
+    async (qty) => {
+      await expect(
+        unsafeManualReturnBulk(BULK_EVENT_ID, BULK_EVENT_EQUIPMENT_ID, qty)
+      ).resolves.toEqual({ ok: false, error: "Quantidade de devolução inválida." });
+      expect(mocks.getCurrentUserContext).not.toHaveBeenCalled();
+      expect(mocks.rpc).not.toHaveBeenCalled();
+    }
+  );
+
+  it("rejeita usuário não autenticado antes de criar o cliente Supabase", async () => {
+    mocks.getCurrentUserContext.mockResolvedValue(null);
+
+    await expect(
+      manualReturnBulk(BULK_EVENT_ID, BULK_EVENT_EQUIPMENT_ID, 1)
+    ).resolves.toEqual({ ok: false, error: "Não autenticado" });
+    expect(mocks.createSupabaseServerClient).not.toHaveBeenCalled();
+  });
+
+  it("rejeita papel diferente de warehouse em chamada direta", async () => {
+    mocks.getCurrentUserContext.mockResolvedValue({ ...WAREHOUSE_CONTEXT, role: "admin" });
+
+    await expect(
+      manualReturnBulk(BULK_EVENT_ID, BULK_EVENT_EQUIPMENT_ID, 1)
+    ).resolves.toEqual({
+      ok: false,
+      error: "Apenas a equipe de almoxarifado pode registrar material extra.",
+    });
+    expect(mocks.rpc).not.toHaveBeenCalled();
+  });
+
+  it("rejeita warehouse sem vínculo com a OS", async () => {
+    mocks.teamMemberHasEventAccess.mockResolvedValue(false);
+
+    await expect(
+      manualReturnBulk(BULK_EVENT_ID, BULK_EVENT_EQUIPMENT_ID, 1)
+    ).resolves.toEqual({ ok: false, error: "Sem acesso a esta OS." });
+    expect(mocks.teamMemberHasEventAccess).toHaveBeenCalledWith("member-1", BULK_EVENT_ID);
+    expect(mocks.rpc).not.toHaveBeenCalled();
+  });
+
+  it("devolve lote pela RPC com evento, linha e delta exatos", async () => {
+    mocks.rpc.mockResolvedValue({ data: 1, error: null });
+
+    await expect(
+      manualReturnBulk(BULK_EVENT_ID, BULK_EVENT_EQUIPMENT_ID, 1)
+    ).resolves.toEqual({
+      ok: true,
+      eventEquipmentId: BULK_EVENT_EQUIPMENT_ID,
+      returnedUnitsCount: 1,
+    });
+    expect(mocks.rpc).toHaveBeenCalledOnce();
+    expect(mocks.rpc).toHaveBeenCalledWith("return_bulk_material", {
+      p_event_id: BULK_EVENT_ID,
+      p_event_equipment_id: BULK_EVENT_EQUIPMENT_ID,
+      p_qty: 1,
+    });
+    expect(mocks.revalidatePath.mock.calls).toEqual([
+      [`/scan/return/${BULK_EVENT_ID}`],
+      [`/events/${BULK_EVENT_ID}`],
+    ]);
+  });
+
+  it("desfaz devolução bulk pela RPC e retorna a nova contagem", async () => {
+    mocks.rpc.mockResolvedValue({ data: 4, error: null });
+
+    await expect(
+      manualUnreturnBulk(BULK_EVENT_ID, BULK_EVENT_EQUIPMENT_ID, 1)
+    ).resolves.toEqual({
+      ok: true,
+      eventEquipmentId: BULK_EVENT_EQUIPMENT_ID,
+      returnedUnitsCount: 4,
+    });
+    expect(mocks.rpc).toHaveBeenCalledWith("unreturn_bulk_material", {
+      p_event_id: BULK_EVENT_ID,
+      p_event_equipment_id: BULK_EVENT_EQUIPMENT_ID,
+      p_qty: 1,
+    });
+  });
+
+  it("impede devolução acima de bulk_loaded_qty quando a RPC rejeita o limite", async () => {
+    mocks.rpc.mockResolvedValue({ data: null, error: { message: "EXTRA_RETURN_RANGE" } });
+
+    await expect(
+      manualReturnBulk(BULK_EVENT_ID, BULK_EVENT_EQUIPMENT_ID, 1)
+    ).resolves.toEqual({ ok: false, error: "Quantidade de devolução inválida." });
+  });
+
+  it("impede desfazer abaixo de zero quando a RPC rejeita o limite", async () => {
+    mocks.rpc.mockResolvedValue({ data: null, error: { message: "EXTRA_RETURN_RANGE" } });
+
+    await expect(
+      manualUnreturnBulk(BULK_EVENT_ID, BULK_EVENT_EQUIPMENT_ID, 1)
+    ).resolves.toEqual({ ok: false, error: "Quantidade de devolução inválida." });
+  });
+});
+
+describe("finalizeReturn — materiais carregados pendentes", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.getCurrentAuthUser.mockResolvedValue({ id: "user-1" });
+  });
+
+  it("recusa concluir enquanto um lote carregado ainda não voltou", async () => {
+    const supabase = fakeSupabase({
+      events: [() => chain({ data: { status: "in_field" }, error: null })],
+      event_equipment: [
+        () =>
+          chain({
+            data: [
+              {
+                equipment: { type: "bulk" },
+                bulk_loaded_qty: 5,
+                bulk_returned_qty: 4,
+                event_equipment_units: [],
+              },
+            ],
+            error: null,
+          }),
+      ],
+    });
+    mocks.createSupabaseAdminClient.mockReturnValue(supabase);
+
+    await expect(finalizeReturn("evt-1")).resolves.toEqual({
+      ok: false,
+      error: "Ainda há equipamentos carregados pendentes de devolução.",
+    });
+    expect(supabase._calls().events).toBe(1);
+  });
+
+  it("recusa concluir enquanto uma unidade serializada carregada não voltou", async () => {
+    const supabase = fakeSupabase({
+      events: [() => chain({ data: { status: "in_field" }, error: null })],
+      event_equipment: [
+        () =>
+          chain({
+            data: [
+              {
+                equipment: { type: "serialized" },
+                bulk_loaded_qty: 0,
+                bulk_returned_qty: 0,
+                event_equipment_units: [{ loaded_at: "2026-08-20T10:00:00Z", returned_at: null }],
+              },
+            ],
+            error: null,
+          }),
+      ],
+    });
+    mocks.createSupabaseAdminClient.mockReturnValue(supabase);
+
+    await expect(finalizeReturn("evt-1")).resolves.toEqual({
+      ok: false,
+      error: "Ainda há equipamentos carregados pendentes de devolução.",
+    });
+    expect(supabase._calls().events).toBe(1);
+  });
+
+  it("conclui quando lotes e unidades serializadas carregadas já voltaram", async () => {
+    const supabase = fakeSupabase({
+      events: [
+        () => chain({ data: { status: "in_field" }, error: null }),
+        () => chain({ error: null }),
+      ],
+      event_equipment: [
+        () =>
+          chain({
+            data: [
+              {
+                equipment: { type: "bulk" },
+                bulk_loaded_qty: 5,
+                bulk_returned_qty: 5,
+                event_equipment_units: [],
+              },
+              {
+                equipment: { type: "serialized" },
+                bulk_loaded_qty: 0,
+                bulk_returned_qty: 0,
+                event_equipment_units: [
+                  {
+                    loaded_at: "2026-08-20T10:00:00Z",
+                    returned_at: "2026-08-20T18:00:00Z",
+                  },
+                ],
+              },
+            ],
+            error: null,
+          }),
+      ],
+    });
+    mocks.createSupabaseAdminClient.mockReturnValue(supabase);
+
+    await expect(finalizeReturn("evt-1")).resolves.toEqual({ ok: true });
+    expect(supabase._calls().events).toBe(2);
   });
 });
 

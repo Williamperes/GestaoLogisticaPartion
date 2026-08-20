@@ -25,6 +25,7 @@ export interface ScanResult {
   unitId?: string;
   equipmentId?: string;
   eventEquipmentId?: string;
+  returnedUnitsCount?: number;
 }
 
 export interface ExtraBulkInput {
@@ -65,6 +66,7 @@ const EXTRA_MATERIAL_ERRORS: Record<string, string> = {
   EXTRA_REASON_REQUIRED: "Informe o motivo do material extra.",
   EXTRA_NOT_AVAILABLE: "Material indisponível.",
   EXTRA_UNIT_CONFLICT: "Esta unidade já está carregada em outra OS.",
+  EXTRA_RETURN_RANGE: "Quantidade de devolução inválida.",
 };
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -259,6 +261,60 @@ export async function registerExtraBulkMaterial(
 
   revalidateExtraMaterial(eventId);
   return extraMaterialSuccess(row);
+}
+
+async function mutateBulkReturn(
+  rpcName: "return_bulk_material" | "unreturn_bulk_material",
+  eventIdInput: unknown,
+  eventEquipmentIdInput: unknown,
+  qty: unknown
+): Promise<ScanResult> {
+  const eventId = normalizeUuid(eventIdInput);
+  const eventEquipmentId = normalizeUuid(eventEquipmentIdInput);
+  if (!eventId || !eventEquipmentId) {
+    return { ok: false, error: "Sem acesso a esta OS." };
+  }
+  if (!Number.isSafeInteger(qty) || (qty as number) <= 0) {
+    return { ok: false, error: "Quantidade de devolução inválida." };
+  }
+
+  const authorizationError = await authorizeExtraMaterial(eventId);
+  if (authorizationError) return authorizationError;
+
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase.rpc(rpcName, {
+    p_event_id: eventId,
+    p_event_equipment_id: eventEquipmentId,
+    p_qty: qty as number,
+  });
+  if (error) return { ok: false, error: translateExtraMaterialError(error.message) };
+  if (!Number.isSafeInteger(data) || (data as number) < 0) {
+    return { ok: false, error: "Não foi possível atualizar a devolução." };
+  }
+
+  revalidatePath(`/scan/return/${eventId}`);
+  revalidatePath(`/events/${eventId}`);
+  return {
+    ok: true,
+    eventEquipmentId,
+    returnedUnitsCount: data as number,
+  };
+}
+
+export async function manualReturnBulk(
+  eventId: string,
+  eventEquipmentId: string,
+  qty: number
+): Promise<ScanResult> {
+  return mutateBulkReturn("return_bulk_material", eventId, eventEquipmentId, qty);
+}
+
+export async function manualUnreturnBulk(
+  eventId: string,
+  eventEquipmentId: string,
+  qty: number
+): Promise<ScanResult> {
+  return mutateBulkReturn("unreturn_bulk_material", eventId, eventEquipmentId, qty);
 }
 
 // Recalcula a contagem de carregados e sincroniza os flags da linha
@@ -622,6 +678,41 @@ export async function finalizeReturn(eventId: string): Promise<ScanResult> {
   if (ev.status === "completed") return { ok: true };
   if (ev.status !== "in_field")
     return { ok: false, error: "Feche a carga (OS em campo) antes de concluir o retorno." };
+
+  const { data: equipmentRows, error: equipmentErr } = await supabase
+    .from("event_equipment")
+    .select(`
+      bulk_loaded_qty,
+      bulk_returned_qty,
+      equipment (type),
+      event_equipment_units (loaded_at, returned_at)
+    `)
+    .eq("event_id", eventId);
+  if (equipmentErr) return { ok: false, error: equipmentErr.message };
+
+  type ReturnableEquipmentRow = {
+    bulk_loaded_qty: number | null;
+    bulk_returned_qty: number | null;
+    equipment: { type: "serialized" | "bulk" } | null;
+    event_equipment_units: Array<{
+      loaded_at: string | null;
+      returned_at: string | null;
+    }> | null;
+  };
+  const hasPendingReturn = ((equipmentRows ?? []) as unknown as ReturnableEquipmentRow[]).some(
+    (row) =>
+      row.equipment?.type === "bulk"
+        ? (row.bulk_returned_qty ?? 0) < (row.bulk_loaded_qty ?? 0)
+        : (row.event_equipment_units ?? []).some(
+            (unit) => unit.loaded_at !== null && unit.returned_at === null
+          )
+  );
+  if (hasPendingReturn) {
+    return {
+      ok: false,
+      error: "Ainda há equipamentos carregados pendentes de devolução.",
+    };
+  }
 
   const { error } = await supabase
     .from("events")
