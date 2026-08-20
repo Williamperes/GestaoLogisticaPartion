@@ -2,9 +2,13 @@
 
 import { revalidatePath } from "next/cache";
 
-import { createSupabaseAdminClient } from "@/lib/supabase/server";
-import { getCurrentAuthUser } from "@/lib/auth/session";
+import {
+  createSupabaseAdminClient,
+  createSupabaseServerClient,
+} from "@/lib/supabase/server";
+import { getCurrentAuthUser, getCurrentUserContext } from "@/lib/auth/session";
 import { getEquipmentUnitByQrCode } from "@/lib/inventory";
+import { getTeamMemberByUserId, teamMemberHasEventAccess } from "@/lib/team";
 
 type AdminClient = ReturnType<typeof createSupabaseAdminClient>;
 
@@ -21,6 +25,153 @@ export interface ScanResult {
   unitId?: string;
   equipmentId?: string;
   eventEquipmentId?: string;
+}
+
+export interface ExtraBulkInput {
+  eventId: string;
+  equipmentId: string;
+  variantId: string | null;
+  qty: number;
+  reason: string;
+}
+
+export interface ExtraMaterialResult extends ScanResult {
+  qty?: number;
+  extraQty?: number;
+}
+
+type ExtraMaterialRpcRow = {
+  event_equipment_id: string;
+  equipment_id: string;
+  equipment_unit_id?: string | null;
+  qty: number;
+  extra_qty: number;
+};
+
+const EXTRA_MATERIAL_ERRORS: Record<string, string> = {
+  EXTRA_NOT_AUTHENTICATED: "Sua sessão expirou. Entre novamente.",
+  EXTRA_FORBIDDEN: "Sem acesso a esta OS.",
+  EXTRA_EVENT_STATE: "Esta OS não permite registrar material extra.",
+  EXTRA_REASON_REQUIRED: "Informe o motivo do material extra.",
+  EXTRA_NOT_AVAILABLE: "Material indisponível.",
+  EXTRA_UNIT_CONFLICT: "Esta unidade já está carregada em outra OS.",
+};
+
+async function authorizeExtraMaterial(eventId: string): Promise<ExtraMaterialResult | null> {
+  const context = await getCurrentUserContext();
+  if (!context) return { ok: false, error: "Não autenticado" };
+  if (context.role !== "warehouse") {
+    return {
+      ok: false,
+      error: "Apenas a equipe de almoxarifado pode registrar material extra.",
+    };
+  }
+
+  const organizationId = context.primaryOrganization?.id;
+  if (!organizationId) return { ok: false, error: "Sem acesso a esta OS." };
+
+  const member = await getTeamMemberByUserId(context.userId, organizationId);
+  const hasAccess = member
+    ? await teamMemberHasEventAccess(member.id, eventId)
+    : false;
+  return hasAccess ? null : { ok: false, error: "Sem acesso a esta OS." };
+}
+
+function translateExtraMaterialError(message: string): string {
+  for (const [code, translated] of Object.entries(EXTRA_MATERIAL_ERRORS)) {
+    if (message.includes(code)) return translated;
+  }
+  return message;
+}
+
+function revalidateExtraMaterial(eventId: string) {
+  revalidatePath(`/scan/load/${eventId}`);
+  revalidatePath(`/scan/return/${eventId}`);
+  revalidatePath(`/events/${eventId}`);
+}
+
+function extraMaterialSuccess(row: ExtraMaterialRpcRow): ExtraMaterialResult {
+  return {
+    ok: true,
+    ...(row.equipment_unit_id ? { unitId: row.equipment_unit_id } : {}),
+    equipmentId: row.equipment_id,
+    eventEquipmentId: row.event_equipment_id,
+    qty: row.qty,
+    extraQty: row.extra_qty,
+  };
+}
+
+export async function registerExtraSerializedMaterial(
+  eventId: string,
+  qrCode: string,
+  reason: string
+): Promise<ExtraMaterialResult> {
+  const normalizedEventId = eventId.trim();
+  const authorizationError = await authorizeExtraMaterial(normalizedEventId);
+  if (authorizationError) return authorizationError;
+
+  const normalizedReason = reason.trim();
+  if (!normalizedReason) {
+    return { ok: false, error: "Informe o motivo do material extra." };
+  }
+
+  const normalizedQrCode = qrCode.trim();
+  if (!normalizedQrCode) return { ok: false, error: "QR vazio" };
+
+  const unit = await getEquipmentUnitByQrCode(normalizedQrCode);
+  if (!unit) return { ok: false, error: "QR não encontrado" };
+
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase
+    .rpc("register_extra_serialized_material", {
+      p_event_id: normalizedEventId,
+      p_equipment_unit_id: unit.id,
+      p_reason: normalizedReason,
+    })
+    .single();
+  if (error) return { ok: false, error: translateExtraMaterialError(error.message) };
+
+  const row = data as ExtraMaterialRpcRow | null;
+  if (!row) return { ok: false, error: "Não foi possível registrar o material extra." };
+
+  revalidateExtraMaterial(normalizedEventId);
+  return extraMaterialSuccess(row);
+}
+
+export async function registerExtraBulkMaterial(
+  input: ExtraBulkInput
+): Promise<ExtraMaterialResult> {
+  const eventId = input.eventId.trim();
+  const authorizationError = await authorizeExtraMaterial(eventId);
+  if (authorizationError) return authorizationError;
+
+  const reason = input.reason.trim();
+  if (!reason) return { ok: false, error: "Informe o motivo do material extra." };
+  if (!Number.isSafeInteger(input.qty) || input.qty <= 0) {
+    return { ok: false, error: "Quantidade inválida." };
+  }
+
+  const equipmentId = input.equipmentId.trim();
+  if (!equipmentId) return { ok: false, error: "Material indisponível." };
+  const variantId = input.variantId?.trim() || null;
+
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase
+    .rpc("register_extra_bulk_material", {
+      p_event_id: eventId,
+      p_equipment_id: equipmentId,
+      p_variant_id: variantId,
+      p_qty: input.qty,
+      p_reason: reason,
+    })
+    .single();
+  if (error) return { ok: false, error: translateExtraMaterialError(error.message) };
+
+  const row = data as ExtraMaterialRpcRow | null;
+  if (!row) return { ok: false, error: "Não foi possível registrar o material extra." };
+
+  revalidateExtraMaterial(eventId);
+  return extraMaterialSuccess(row);
 }
 
 // Recalcula a contagem de carregados e sincroniza os flags da linha

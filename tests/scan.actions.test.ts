@@ -3,7 +3,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   getEquipmentUnitByQrCode: vi.fn(),
   createSupabaseAdminClient: vi.fn(),
+  createSupabaseServerClient: vi.fn(),
   getCurrentAuthUser: vi.fn(),
+  getCurrentUserContext: vi.fn(),
+  getTeamMemberByUserId: vi.fn(),
+  teamMemberHasEventAccess: vi.fn(),
+  revalidatePath: vi.fn(),
+  rpc: vi.fn(),
 }));
 
 vi.mock("@/lib/inventory", async () => {
@@ -13,21 +19,32 @@ vi.mock("@/lib/inventory", async () => {
 
 vi.mock("@/lib/supabase/server", () => ({
   createSupabaseAdminClient: mocks.createSupabaseAdminClient,
+  createSupabaseServerClient: mocks.createSupabaseServerClient,
 }));
 
 vi.mock("@/lib/auth/session", () => ({
   getCurrentAuthUser: mocks.getCurrentAuthUser,
+  getCurrentUserContext: mocks.getCurrentUserContext,
 }));
 
-vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+vi.mock("@/lib/team", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/team")>("@/lib/team");
+  return {
+    ...actual,
+    getTeamMemberByUserId: mocks.getTeamMemberByUserId,
+    teamMemberHasEventAccess: mocks.teamMemberHasEventAccess,
+  };
+});
+
+vi.mock("next/cache", () => ({ revalidatePath: mocks.revalidatePath }));
 
 import {
-  finalizeLoad,
-  finalizeReturn,
   manualLoadUnit,
   manualReturnUnit,
   manualUnloadUnit,
   manualUnreturnUnit,
+  registerExtraBulkMaterial,
+  registerExtraSerializedMaterial,
   scanLoadUnit,
   scanReturnUnit,
   unscanLoadUnit,
@@ -260,6 +277,234 @@ describe("scanLoadUnit", () => {
     // Carga parcial sincroniza a linha como não-carregada (simétrico ao desbipar).
     const updateCall = eeUpdateChain._calls.find((c) => c.method === "update");
     expect(updateCall?.args[0]).toMatchObject({ loaded: false, separated: false });
+  });
+});
+
+const WAREHOUSE_CONTEXT = {
+  userId: "warehouse-user-1",
+  role: "warehouse",
+  primaryOrganization: { id: "org-1" },
+};
+
+function rpcResponse(data: unknown, error: unknown = null) {
+  const single = vi.fn().mockResolvedValue({ data, error });
+  mocks.rpc.mockReturnValue({ single });
+  return single;
+}
+
+describe("registro de material extra", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.rpc.mockReset();
+    mocks.getCurrentUserContext.mockResolvedValue(WAREHOUSE_CONTEXT);
+    mocks.getTeamMemberByUserId.mockResolvedValue({ id: "member-1" });
+    mocks.teamMemberHasEventAccess.mockResolvedValue(true);
+    mocks.getEquipmentUnitByQrCode.mockResolvedValue(VALID_UNIT);
+    mocks.createSupabaseServerClient.mockResolvedValue({ rpc: mocks.rpc });
+  });
+
+  it("rejeita usuário não autenticado antes de criar um cliente Supabase", async () => {
+    mocks.getCurrentUserContext.mockResolvedValue(null);
+
+    await expect(
+      registerExtraSerializedMaterial("event-1", "QR-1", "Reserva")
+    ).resolves.toEqual({ ok: false, error: "Não autenticado" });
+    expect(mocks.createSupabaseAdminClient).not.toHaveBeenCalled();
+    expect(mocks.createSupabaseServerClient).not.toHaveBeenCalled();
+  });
+
+  it("rejeita admin mesmo que a action seja chamada diretamente", async () => {
+    mocks.getCurrentUserContext.mockResolvedValue({
+      ...WAREHOUSE_CONTEXT,
+      role: "admin",
+    });
+
+    await expect(
+      registerExtraBulkMaterial({
+        eventId: "event-1",
+        equipmentId: "equipment-1",
+        variantId: null,
+        qty: 1,
+        reason: "Reserva",
+      })
+    ).resolves.toEqual({
+      ok: false,
+      error: "Apenas a equipe de almoxarifado pode registrar material extra.",
+    });
+    expect(mocks.createSupabaseAdminClient).not.toHaveBeenCalled();
+    expect(mocks.createSupabaseServerClient).not.toHaveBeenCalled();
+  });
+
+  it("rejeita warehouse sem vínculo real com a OS", async () => {
+    mocks.teamMemberHasEventAccess.mockResolvedValue(false);
+
+    await expect(
+      registerExtraSerializedMaterial("event-1", "QR-1", "Reserva")
+    ).resolves.toEqual({ ok: false, error: "Sem acesso a esta OS." });
+    expect(mocks.getTeamMemberByUserId).toHaveBeenCalledWith(
+      "warehouse-user-1",
+      "org-1"
+    );
+    expect(mocks.teamMemberHasEventAccess).toHaveBeenCalledWith("member-1", "event-1");
+    expect(mocks.createSupabaseAdminClient).not.toHaveBeenCalled();
+    expect(mocks.createSupabaseServerClient).not.toHaveBeenCalled();
+  });
+
+  it("rejeita warehouse sem organização primária", async () => {
+    mocks.getCurrentUserContext.mockResolvedValue({
+      ...WAREHOUSE_CONTEXT,
+      primaryOrganization: null,
+    });
+
+    await expect(
+      registerExtraSerializedMaterial("event-1", "QR-1", "Reserva")
+    ).resolves.toEqual({ ok: false, error: "Sem acesso a esta OS." });
+    expect(mocks.getTeamMemberByUserId).not.toHaveBeenCalled();
+  });
+
+  it("rejeita motivo vazio depois de normalizar espaços", async () => {
+    await expect(
+      registerExtraSerializedMaterial("event-1", "QR-1", "   ")
+    ).resolves.toEqual({
+      ok: false,
+      error: "Informe o motivo do material extra.",
+    });
+    expect(mocks.getEquipmentUnitByQrCode).not.toHaveBeenCalled();
+    expect(mocks.rpc).not.toHaveBeenCalled();
+  });
+
+  it.each([0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1])(
+    "rejeita quantidade bulk inválida: %s",
+    async (qty) => {
+      await expect(
+        registerExtraBulkMaterial({
+          eventId: "event-1",
+          equipmentId: "equipment-1",
+          variantId: null,
+          qty,
+          reason: "Reserva",
+        })
+      ).resolves.toEqual({ ok: false, error: "Quantidade inválida." });
+      expect(mocks.rpc).not.toHaveBeenCalled();
+    }
+  );
+
+  it("resolve o QR normalizado, chama a RPC serializada uma vez e retorna a linha", async () => {
+    const single = rpcResponse({
+      event_equipment_id: "event-equipment-1",
+      equipment_id: "equipment-1",
+      equipment_unit_id: "unit-1",
+      qty: 4,
+      extra_qty: 1,
+    });
+
+    const result = await registerExtraSerializedMaterial(
+      "  event-1  ",
+      "  QR-123  ",
+      "  Cliente pediu reforço  "
+    );
+
+    expect(mocks.getEquipmentUnitByQrCode).toHaveBeenCalledOnce();
+    expect(mocks.getEquipmentUnitByQrCode).toHaveBeenCalledWith("QR-123");
+    expect(mocks.rpc).toHaveBeenCalledOnce();
+    expect(mocks.rpc).toHaveBeenCalledWith("register_extra_serialized_material", {
+      p_event_id: "event-1",
+      p_equipment_unit_id: "unit-1",
+      p_reason: "Cliente pediu reforço",
+    });
+    expect(single).toHaveBeenCalledOnce();
+    expect(result).toEqual({
+      ok: true,
+      unitId: "unit-1",
+      equipmentId: "equipment-1",
+      eventEquipmentId: "event-equipment-1",
+      qty: 4,
+      extraQty: 1,
+    });
+    expect(mocks.revalidatePath.mock.calls).toEqual([
+      ["/scan/load/event-1"],
+      ["/scan/return/event-1"],
+      ["/events/event-1"],
+    ]);
+  });
+
+  it("chama a RPC bulk com quantidade inteira, variante nullable e strings normalizadas", async () => {
+    rpcResponse({
+      event_equipment_id: "event-equipment-2",
+      equipment_id: "equipment-2",
+      qty: 7,
+      extra_qty: 3,
+      bulk_loaded_qty: 3,
+    });
+
+    const result = await registerExtraBulkMaterial({
+      eventId: "  event-1 ",
+      equipmentId: " equipment-2  ",
+      variantId: null,
+      qty: 3,
+      reason: "  Reserva técnica ",
+    });
+
+    expect(mocks.rpc).toHaveBeenCalledOnce();
+    expect(mocks.rpc).toHaveBeenCalledWith("register_extra_bulk_material", {
+      p_event_id: "event-1",
+      p_equipment_id: "equipment-2",
+      p_variant_id: null,
+      p_qty: 3,
+      p_reason: "Reserva técnica",
+    });
+    expect(result).toEqual({
+      ok: true,
+      equipmentId: "equipment-2",
+      eventEquipmentId: "event-equipment-2",
+      qty: 7,
+      extraQty: 3,
+    });
+  });
+
+  it("normaliza variante bulk não nula", async () => {
+    rpcResponse({
+      event_equipment_id: "event-equipment-2",
+      equipment_id: "equipment-2",
+      qty: 2,
+      extra_qty: 1,
+    });
+
+    await registerExtraBulkMaterial({
+      eventId: "event-1",
+      equipmentId: "equipment-2",
+      variantId: "  variant-1  ",
+      qty: 1,
+      reason: "Reserva",
+    });
+
+    expect(mocks.rpc).toHaveBeenCalledWith(
+      "register_extra_bulk_material",
+      expect.objectContaining({ p_variant_id: "variant-1" })
+    );
+  });
+
+  it.each([
+    ["EXTRA_NOT_AUTHENTICATED", "Sua sessão expirou. Entre novamente."],
+    ["EXTRA_FORBIDDEN", "Sem acesso a esta OS."],
+    ["EXTRA_EVENT_STATE", "Esta OS não permite registrar material extra."],
+    ["EXTRA_REASON_REQUIRED", "Informe o motivo do material extra."],
+    ["EXTRA_NOT_AVAILABLE", "Material indisponível."],
+    ["EXTRA_UNIT_CONFLICT", "Esta unidade já está carregada em outra OS."],
+  ])("traduz o código estável %s", async (code, message) => {
+    rpcResponse(null, { message: code });
+
+    await expect(
+      registerExtraSerializedMaterial("event-1", "QR-1", "Reserva")
+    ).resolves.toEqual({ ok: false, error: message });
+  });
+
+  it("preserva mensagem desconhecida retornada pela RPC", async () => {
+    rpcResponse(null, { message: "database unavailable" });
+
+    await expect(
+      registerExtraSerializedMaterial("event-1", "QR-1", "Reserva")
+    ).resolves.toEqual({ ok: false, error: "database unavailable" });
   });
 });
 
