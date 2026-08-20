@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
+import { createElement } from "react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen, waitFor, fireEvent, act } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent, act, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 // Mock do QrScanner: expõe o onResult recebido para podermos disparar
@@ -17,8 +18,7 @@ vi.mock("@/components/inventory/QrScanner", () => ({
   }) => {
     scannerOnResult = onResult;
     scannerOnError = onError;
-    const React = require("react");
-    return React.createElement("button", {
+    return createElement("button", {
       type: "button",
       "data-testid": "fake-scan",
       onClick: () => onResult("QR-SCAN"),
@@ -42,11 +42,23 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: routerPush }),
 }));
 
-const scanLoadUnit = vi.fn(async () => ({ ok: true, eventEquipmentId: "e1" }));
-const unscanLoadUnit = vi.fn(async () => ({ ok: true, eventEquipmentId: "e1" }));
-const manualLoadUnit = vi.fn(async () => ({ ok: true }));
-const manualUnloadUnit = vi.fn(async () => ({ ok: true }));
-const finalizeLoad = vi.fn(async () => ({ ok: true }));
+interface ScanActionResult {
+  ok: boolean;
+  eventEquipmentId?: string;
+  error?: string;
+}
+
+const scanLoadUnit = vi.fn(async (): Promise<ScanActionResult> => ({
+  ok: true,
+  eventEquipmentId: "e1",
+}));
+const unscanLoadUnit = vi.fn(async (): Promise<ScanActionResult> => ({
+  ok: true,
+  eventEquipmentId: "e1",
+}));
+const manualLoadUnit = vi.fn(async (): Promise<ScanActionResult> => ({ ok: true }));
+const manualUnloadUnit = vi.fn(async (): Promise<ScanActionResult> => ({ ok: true }));
+const finalizeLoad = vi.fn(async (): Promise<ScanActionResult> => ({ ok: true }));
 vi.mock("@/app/(dashboard)/scan/actions", () => ({
   scanLoadUnit: (...a: unknown[]) => scanLoadUnit(...(a as [])),
   unscanLoadUnit: (...a: unknown[]) => unscanLoadUnit(...(a as [])),
@@ -63,6 +75,49 @@ const items = [
   { id: "e2", equipmentName: "Microfone", variantLabel: null, qty: 2, loadedUnitsCount: 2 },
 ];
 
+const extraCandidates = [
+  {
+    equipmentId: "eq-extra",
+    equipmentName: "Cabo reserva",
+    equipmentType: "bulk" as const,
+    variantId: null,
+    variantLabel: null,
+    availableQty: 4,
+    unit: "unidades",
+    availableUnits: [],
+  },
+];
+
+const initialExtraLog = [
+  {
+    id: "log-1",
+    eventEquipmentId: "ee-extra",
+    equipmentId: "eq-extra",
+    equipmentName: "Cabo reserva",
+    variantId: null,
+    variantLabel: null,
+    equipmentUnitId: null,
+    qty: 1,
+    reason: "Reforço solicitado",
+    addedBy: "user-1",
+    addedByName: "Ana",
+    createdAt: "2026-08-20T18:00:00.000Z",
+  },
+];
+
+const defaultProps = {
+  eventId: "ev1",
+  eventStatus: "ready_to_load" as const,
+  initialItems: items,
+  role: "admin" as const,
+  extraCandidates: [],
+  initialExtraLog: [],
+};
+
+function renderClient(overrides: Partial<Parameters<typeof LoadScanClient>[0]> = {}) {
+  return render(<LoadScanClient {...defaultProps} {...overrides} />);
+}
+
 beforeEach(() => {
   scannerOnResult = null;
   scannerOnError = null;
@@ -76,7 +131,7 @@ beforeEach(() => {
 
 describe("LoadScanClient — render default", () => {
   it("mostra os modos, scanner, progresso e listas", () => {
-    render(<LoadScanClient eventId="ev1" eventStatus="ready_to_load" initialItems={items} />);
+    renderClient();
 
     expect(screen.getByRole("button", { name: "Bipar" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Desbipar" })).toBeInTheDocument();
@@ -93,14 +148,38 @@ describe("LoadScanClient — render default", () => {
   });
 
   it("mostra mensagem de vazio sem itens", () => {
-    render(<LoadScanClient eventId="ev1" eventStatus="ready_to_load" initialItems={[]} />);
+    renderClient({ initialItems: [] });
     expect(screen.getByText("Nenhum equipamento nesta OS.")).toBeInTheDocument();
+  });
+
+  it("mostra Material a mais somente para warehouse e abre o painel real", async () => {
+    const user = userEvent.setup();
+    const { rerender } = renderClient({
+      role: "warehouse",
+      extraCandidates,
+      initialExtraLog,
+    });
+
+    await user.click(screen.getByRole("button", { name: "Material a mais" }));
+
+    expect(screen.getByLabelText("Motivo do material extra")).toBeRequired();
+    expect(
+      within(screen.getByRole("list", { name: "Materiais disponíveis" })).getByText(
+        "Cabo reserva"
+      )
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Progresso")).not.toBeInTheDocument();
+
+    rerender(<LoadScanClient {...defaultProps} role="admin" />);
+
+    expect(screen.queryByRole("button", { name: "Material a mais" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Motivo do material extra")).not.toBeInTheDocument();
   });
 });
 
 describe("LoadScanClient — scan", () => {
   it("ao escanear com sucesso no modo load incrementa e dá feedback", async () => {
-    render(<LoadScanClient eventId="ev1" eventStatus="ready_to_load" initialItems={items} />);
+    renderClient();
 
     await waitFor(() => expect(scannerOnResult).not.toBeNull());
     scannerOnResult?.("QR-SCAN");
@@ -114,7 +193,7 @@ describe("LoadScanClient — scan", () => {
 
   it("ao escanear com erro mostra toast de erro e feedback de erro", async () => {
     scanLoadUnit.mockResolvedValueOnce({ ok: false, error: "Inválido" });
-    render(<LoadScanClient eventId="ev1" eventStatus="ready_to_load" initialItems={items} />);
+    renderClient();
 
     await waitFor(() => expect(scannerOnResult).not.toBeNull());
     scannerOnResult?.("QR-X");
@@ -125,7 +204,7 @@ describe("LoadScanClient — scan", () => {
 
   it("no modo desbipar usa unscanLoadUnit", async () => {
     const user = userEvent.setup();
-    render(<LoadScanClient eventId="ev1" eventStatus="ready_to_load" initialItems={items} />);
+    renderClient();
 
     await user.click(screen.getByRole("button", { name: "Desbipar" }));
     await waitFor(() => expect(scannerOnResult).not.toBeNull());
@@ -139,7 +218,7 @@ describe("LoadScanClient — scan", () => {
 describe("LoadScanClient — manual counter", () => {
   it("o botão Bipar 1 chama manualLoadUnit e incrementa", async () => {
     const user = userEvent.setup();
-    render(<LoadScanClient eventId="ev1" eventStatus="ready_to_load" initialItems={items} />);
+    renderClient();
 
     const plus = screen.getAllByRole("button", { name: "Bipar 1" })[0];
     await user.click(plus);
@@ -150,7 +229,7 @@ describe("LoadScanClient — manual counter", () => {
 
   it("o botão Desbipar 1 chama manualUnloadUnit", async () => {
     const user = userEvent.setup();
-    render(<LoadScanClient eventId="ev1" eventStatus="ready_to_load" initialItems={items} />);
+    renderClient();
 
     const minus = screen.getAllByRole("button", { name: "Desbipar 1" })[0];
     await user.click(minus);
@@ -161,7 +240,7 @@ describe("LoadScanClient — manual counter", () => {
   it("erro no manual mostra toast e feedback de erro sem aplicar delta", async () => {
     const user = userEvent.setup();
     manualLoadUnit.mockResolvedValueOnce({ ok: false, error: "Sem estoque" });
-    render(<LoadScanClient eventId="ev1" eventStatus="ready_to_load" initialItems={items} />);
+    renderClient();
 
     const plus = screen.getAllByRole("button", { name: "Bipar 1" })[0];
     await user.click(plus);
@@ -180,7 +259,7 @@ describe("LoadScanClient — finalizar carga", () => {
 
   it("ready_to_load: botão fecha a OS, navega e dá toast", async () => {
     const user = userEvent.setup();
-    render(<LoadScanClient eventId="ev1" eventStatus="ready_to_load" initialItems={allLoaded} />);
+    renderClient({ initialItems: allLoaded });
 
     await user.click(screen.getByRole("button", { name: /Fechar OS/ }));
 
@@ -190,7 +269,7 @@ describe("LoadScanClient — finalizar carga", () => {
   });
 
   it("in_field: indica que já está em campo, sem botão", () => {
-    render(<LoadScanClient eventId="ev1" eventStatus="in_field" initialItems={allLoaded} />);
+    renderClient({ eventStatus: "in_field", initialItems: allLoaded });
     expect(screen.getByText("OS já está em campo ✓")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Fechar OS/ })).not.toBeInTheDocument();
   });
@@ -198,7 +277,7 @@ describe("LoadScanClient — finalizar carga", () => {
   it("erro ao finalizar mostra toast e não navega", async () => {
     finalizeLoad.mockResolvedValueOnce({ ok: false, error: "Falhou" });
     const user = userEvent.setup();
-    render(<LoadScanClient eventId="ev1" eventStatus="ready_to_load" initialItems={allLoaded} />);
+    renderClient({ initialItems: allLoaded });
 
     await user.click(screen.getByRole("button", { name: /Fechar OS/ }));
 
@@ -210,7 +289,7 @@ describe("LoadScanClient — finalizar carga", () => {
 describe("LoadScanClient — modo e erro de scanner", () => {
   it("alterna de volta para o modo Bipar", async () => {
     const user = userEvent.setup();
-    render(<LoadScanClient eventId="ev1" eventStatus="ready_to_load" initialItems={items} />);
+    renderClient();
 
     await user.click(screen.getByRole("button", { name: "Desbipar" }));
     await user.click(screen.getByRole("button", { name: "Bipar" }));
@@ -220,7 +299,7 @@ describe("LoadScanClient — modo e erro de scanner", () => {
   });
 
   it("propaga erro do scanner como toast de erro", async () => {
-    render(<LoadScanClient eventId="ev1" eventStatus="ready_to_load" initialItems={items} />);
+    renderClient();
     await waitFor(() => expect(scannerOnError).not.toBeNull());
     scannerOnError?.({ message: "Câmera negada" });
     expect(toastError).toHaveBeenCalledWith("Câmera negada");
@@ -231,7 +310,7 @@ describe("LoadScanClient — modo e erro de scanner", () => {
     manualLoadUnit.mockImplementationOnce(
       () => new Promise((res) => { resolveFirst = res; })
     );
-    render(<LoadScanClient eventId="ev1" eventStatus="ready_to_load" initialItems={items} />);
+    renderClient();
 
     const plus = screen.getAllByRole("button", { name: "Bipar 1" })[0];
     await act(async () => {

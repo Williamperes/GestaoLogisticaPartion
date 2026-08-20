@@ -26,19 +26,38 @@ vi.mock("@/lib/team", async (o) => ({
   teamMemberHasEventAccess: vi.fn(),
 }));
 
+vi.mock("@/lib/extra-material", async (o) => ({
+  ...(await o<typeof import("@/lib/extra-material")>()),
+  listExtraMaterialCandidates: vi.fn(),
+  listExtraMaterialLog: vi.fn(),
+}));
+
+const { loadScanClient } = vi.hoisted(() => ({
+  loadScanClient: vi.fn((props: unknown) => {
+    void props;
+    return null;
+  }),
+}));
+
 vi.mock("@/app/(dashboard)/scan/load/[eventId]/LoadScanClient", () => ({
-  LoadScanClient: () => null,
+  LoadScanClient: (props: unknown) => loadScanClient(props),
 }));
 
 import ScanLoadPage from "@/app/(dashboard)/scan/load/[eventId]/page";
 import { getCurrentUserContext } from "@/lib/auth/session";
 import { getEventById } from "@/lib/events";
+import {
+  listExtraMaterialCandidates,
+  listExtraMaterialLog,
+} from "@/lib/extra-material";
 import { getTeamMemberByUserId, teamMemberHasEventAccess } from "@/lib/team";
 
 const getCtx = vi.mocked(getCurrentUserContext);
 const getEvent = vi.mocked(getEventById);
 const getMember = vi.mocked(getTeamMemberByUserId);
 const hasAccess = vi.mocked(teamMemberHasEventAccess);
+const listCandidates = vi.mocked(listExtraMaterialCandidates);
+const listLog = vi.mocked(listExtraMaterialLog);
 
 const eventFixture = {
   id: "ev-1",
@@ -49,7 +68,11 @@ const eventFixture = {
 } as never;
 
 describe("ScanLoadPage", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    listCandidates.mockResolvedValue([]);
+    listLog.mockResolvedValue([]);
+  });
   afterEach(() => cleanup());
 
   it("renderiza o cabeçalho de carga do evento (admin)", async () => {
@@ -60,6 +83,15 @@ describe("ScanLoadPage", () => {
     const { render, screen } = await import("@testing-library/react");
     render(ui);
     expect(screen.getByRole("heading", { name: /Carregar/ })).toHaveTextContent("Show Sul");
+    expect(listCandidates).not.toHaveBeenCalled();
+    expect(listLog).not.toHaveBeenCalled();
+    expect(loadScanClient).toHaveBeenCalledWith(
+      expect.objectContaining({
+        role: "admin",
+        extraCandidates: [],
+        initialExtraLog: [],
+      })
+    );
   });
 
   it("chama notFound quando o evento não existe", async () => {
@@ -78,17 +110,34 @@ describe("ScanLoadPage", () => {
     await expect(
       ScanLoadPage({ params: Promise.resolve({ eventId: "ev-1" }) })
     ).rejects.toThrow(/REDIRECT:\/events/);
+    expect(listCandidates).not.toHaveBeenCalled();
+    expect(listLog).not.toHaveBeenCalled();
   });
 
-  it("warehouse com acesso renderiza normalmente", async () => {
+  it("warehouse com acesso consulta e propaga os dados extras da OS e organização atuais", async () => {
     getEvent.mockResolvedValue(eventFixture);
     getCtx.mockResolvedValue({ role: "warehouse", userId: "u1", primaryOrganization: { id: "org-1" } } as never);
     getMember.mockResolvedValue({ id: "m-1" } as never);
     hasAccess.mockResolvedValue(true);
+    const candidates = [{ equipmentId: "eq-extra" }] as never;
+    const log = [{ id: "log-1" }] as never;
+    listCandidates.mockResolvedValue(candidates);
+    listLog.mockResolvedValue(log);
 
     const ui = await ScanLoadPage({ params: Promise.resolve({ eventId: "ev-1" }) });
     const { render, screen } = await import("@testing-library/react");
     render(ui);
     expect(screen.getByRole("heading", { name: /Carregar/ })).toHaveTextContent("Show Sul");
+    expect(listCandidates).toHaveBeenCalledTimes(1);
+    expect(listCandidates).toHaveBeenCalledWith("ev-1", "org-1");
+    expect(listLog).toHaveBeenCalledTimes(1);
+    expect(listLog).toHaveBeenCalledWith("ev-1", "org-1");
+    expect(loadScanClient).toHaveBeenCalledWith(
+      expect.objectContaining({
+        role: "warehouse",
+        extraCandidates: candidates,
+        initialExtraLog: log,
+      })
+    );
   });
 });

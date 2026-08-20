@@ -16,6 +16,10 @@ import {
 } from "@/app/(dashboard)/scan/actions";
 
 import { QrScanner } from "@/components/inventory/QrScanner";
+import type { AppRole } from "@/lib/auth/roles";
+import type { ExtraMaterialCandidate, ExtraMaterialLog } from "@/lib/extra-material";
+
+import { ExtraMaterialPanel } from "./ExtraMaterialPanel";
 
 interface Item {
   id: string;
@@ -29,16 +33,28 @@ interface LoadScanClientProps {
   eventId: string;
   eventStatus: EventStatus;
   initialItems: Item[];
+  role: AppRole | null;
+  extraCandidates: ExtraMaterialCandidate[];
+  initialExtraLog: ExtraMaterialLog[];
 }
 
-type Mode = "load" | "unload";
+type Mode = "load" | "unload" | "extra";
 
-export function LoadScanClient({ eventId, eventStatus, initialItems }: LoadScanClientProps) {
+export function LoadScanClient({
+  eventId,
+  eventStatus,
+  initialItems,
+  role,
+  extraCandidates,
+  initialExtraLog,
+}: LoadScanClientProps) {
   const router = useRouter();
   const [items, setItems] = useState(initialItems);
   const [mode, setMode] = useState<Mode>("load");
   const [busy, setBusy] = useState(false);
   const [finalizing, setFinalizing] = useState(false);
+  const isWarehouse = role === "warehouse";
+  const showsExtraPanel = isWarehouse && mode === "extra";
 
   const { pending, done } = useMemo(() => {
     const pending: Item[] = [];
@@ -64,16 +80,17 @@ export function LoadScanClient({ eventId, eventStatus, initialItems }: LoadScanC
   }
 
   async function handleScan(text: string) {
+    const scanMode = mode === "unload" ? "unload" : "load";
     const result =
-      mode === "load" ? await scanLoadUnit(eventId, text) : await unscanLoadUnit(eventId, text);
+      scanMode === "load" ? await scanLoadUnit(eventId, text) : await unscanLoadUnit(eventId, text);
     if (!result.ok) {
       scanFeedbackError();
       toast.error(result.error ?? "Erro");
       return;
     }
     scanFeedbackSuccess();
-    if (result.eventEquipmentId) applyDelta(result.eventEquipmentId, mode === "load" ? 1 : -1);
-    toast.success(mode === "load" ? `Carregado: ${text}` : `Removido: ${text}`);
+    if (result.eventEquipmentId) applyDelta(result.eventEquipmentId, scanMode === "load" ? 1 : -1);
+    toast.success(scanMode === "load" ? `Carregado: ${text}` : `Removido: ${text}`);
   }
 
   async function handleManual(item: Item, delta: 1 | -1) {
@@ -142,7 +159,11 @@ export function LoadScanClient({ eventId, eventStatus, initialItems }: LoadScanC
 
   return (
     <>
-      <div className="mb-3 grid grid-cols-2 gap-1 rounded-xl border border-border bg-card p-1">
+      <div
+        className={`mb-3 grid ${
+          isWarehouse ? "grid-cols-3" : "grid-cols-2"
+        } gap-1 rounded-xl border border-border bg-card p-1`}
+      >
         <button
           type="button"
           onClick={() => setMode("load")}
@@ -161,97 +182,120 @@ export function LoadScanClient({ eventId, eventStatus, initialItems }: LoadScanC
         >
           Desbipar
         </button>
+        {isWarehouse && (
+          <button
+            type="button"
+            onClick={() => setMode("extra")}
+            className={`rounded-lg py-1.5 text-xs font-semibold transition ${
+              mode === "extra" ? "bg-amber-500/15 text-amber-700" : "text-muted-foreground"
+            }`}
+          >
+            Material a mais
+          </button>
+        )}
       </div>
 
-      <div
-        className={
-          mode === "unload" ? "rounded-2xl ring-2 ring-red-500/40 ring-offset-2 ring-offset-background" : ""
-        }
-      >
-        <QrScanner onResult={handleScan} onError={(e) => toast.error(e.message)} />
-      </div>
+      {showsExtraPanel ? (
+        <ExtraMaterialPanel
+          eventId={eventId}
+          candidates={extraCandidates}
+          initialLog={initialExtraLog}
+        />
+      ) : (
+        <>
+          <div
+            className={
+              mode === "unload"
+                ? "rounded-2xl ring-2 ring-red-500/40 ring-offset-2 ring-offset-background"
+                : ""
+            }
+          >
+            <QrScanner onResult={handleScan} onError={(e) => toast.error(e.message)} />
+          </div>
 
-      <div className="mt-3 flex items-center justify-between rounded-xl border border-border bg-card px-3 py-2 text-xs">
-        <span className="font-medium">Progresso</span>
-        <span className="text-muted-foreground">
-          {totalLoaded}/{totalQty} unidades
-        </span>
-      </div>
+          <div className="mt-3 flex items-center justify-between rounded-xl border border-border bg-card px-3 py-2 text-xs">
+            <span className="font-medium">Progresso</span>
+            <span className="text-muted-foreground">
+              {totalLoaded}/{totalQty} unidades
+            </span>
+          </div>
 
-      {pending.length > 0 && (
-        <section className="mt-3 space-y-1.5">
-          <h2 className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
-            Pendentes
-          </h2>
-          <ul className="space-y-2">
-            {pending.map((item) => (
-              <li
-                key={item.id}
-                className="flex items-center justify-between gap-2 rounded-xl border border-border bg-card p-3 text-sm"
-              >
-                <span className="min-w-0 truncate">
-                  {item.equipmentName}
-                  {item.variantLabel ? ` · ${item.variantLabel}` : ""}
-                </span>
-                <Counter item={item} />
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-
-      {done.length > 0 && (
-        <section className="mt-4 space-y-1.5">
-          <h2 className="text-[10px] font-semibold uppercase tracking-widest text-emerald-700">
-            Carregados ({done.length})
-          </h2>
-          <ul className="space-y-2">
-            {done.map((item) => (
-              <li
-                key={item.id}
-                className="flex items-center justify-between gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-3 text-sm"
-              >
-                <span className="flex min-w-0 items-center gap-2 truncate text-emerald-800">
-                  <Check className="h-4 w-4 shrink-0" />
-                  <span className="truncate">
-                    {item.equipmentName}
-                    {item.variantLabel ? ` · ${item.variantLabel}` : ""}
-                  </span>
-                </span>
-                <Counter item={item} />
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-
-      {pending.length === 0 && done.length > 0 && (
-        <div className="mt-3 space-y-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-center">
-          <p className="text-sm font-medium text-emerald-700">Tudo carregado.</p>
-          {eventStatus === "in_field" ? (
-            <p className="text-xs font-medium text-amber-600">OS já está em campo ✓</p>
-          ) : (
-            <button
-              type="button"
-              onClick={handleFinalize}
-              disabled={finalizing || eventStatus !== "ready_to_load"}
-              className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-amber-500 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-amber-600 disabled:opacity-50"
-            >
-              <Truck className="h-4 w-4" />
-              {finalizing
-                ? "Fechando..."
-                : eventStatus === "ready_to_load"
-                ? "Fechar OS — colocar Em Campo"
-                : "Libere a carga na OS primeiro"}
-            </button>
+          {pending.length > 0 && (
+            <section className="mt-3 space-y-1.5">
+              <h2 className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+                Pendentes
+              </h2>
+              <ul className="space-y-2">
+                {pending.map((item) => (
+                  <li
+                    key={item.id}
+                    className="flex items-center justify-between gap-2 rounded-xl border border-border bg-card p-3 text-sm"
+                  >
+                    <span className="min-w-0 truncate">
+                      {item.equipmentName}
+                      {item.variantLabel ? ` · ${item.variantLabel}` : ""}
+                    </span>
+                    <Counter item={item} />
+                  </li>
+                ))}
+              </ul>
+            </section>
           )}
-        </div>
-      )}
 
-      {items.length === 0 && (
-        <p className="mt-3 rounded-xl border border-dashed border-border bg-card p-3 text-center text-sm text-muted-foreground">
-          Nenhum equipamento nesta OS.
-        </p>
+          {done.length > 0 && (
+            <section className="mt-4 space-y-1.5">
+              <h2 className="text-[10px] font-semibold uppercase tracking-widest text-emerald-700">
+                Carregados ({done.length})
+              </h2>
+              <ul className="space-y-2">
+                {done.map((item) => (
+                  <li
+                    key={item.id}
+                    className="flex items-center justify-between gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-3 text-sm"
+                  >
+                    <span className="flex min-w-0 items-center gap-2 truncate text-emerald-800">
+                      <Check className="h-4 w-4 shrink-0" />
+                      <span className="truncate">
+                        {item.equipmentName}
+                        {item.variantLabel ? ` · ${item.variantLabel}` : ""}
+                      </span>
+                    </span>
+                    <Counter item={item} />
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+
+          {pending.length === 0 && done.length > 0 && (
+            <div className="mt-3 space-y-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-center">
+              <p className="text-sm font-medium text-emerald-700">Tudo carregado.</p>
+              {eventStatus === "in_field" ? (
+                <p className="text-xs font-medium text-amber-600">OS já está em campo ✓</p>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleFinalize}
+                  disabled={finalizing || eventStatus !== "ready_to_load"}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-amber-500 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-amber-600 disabled:opacity-50"
+                >
+                  <Truck className="h-4 w-4" />
+                  {finalizing
+                    ? "Fechando..."
+                    : eventStatus === "ready_to_load"
+                    ? "Fechar OS — colocar Em Campo"
+                    : "Libere a carga na OS primeiro"}
+                </button>
+              )}
+            </div>
+          )}
+
+          {items.length === 0 && (
+            <p className="mt-3 rounded-xl border border-dashed border-border bg-card p-3 text-center text-sm text-muted-foreground">
+              Nenhum equipamento nesta OS.
+            </p>
+          )}
+        </>
       )}
     </>
   );

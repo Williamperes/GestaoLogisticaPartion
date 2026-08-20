@@ -2,6 +2,12 @@ import { notFound, redirect } from "next/navigation";
 
 import { getCurrentUserContext } from "@/lib/auth/session";
 import { getEventById } from "@/lib/events";
+import {
+  listExtraMaterialCandidates,
+  listExtraMaterialLog,
+  type ExtraMaterialCandidate,
+  type ExtraMaterialLog,
+} from "@/lib/extra-material";
 import { getTeamMemberByUserId, teamMemberHasEventAccess } from "@/lib/team";
 
 import { LoadScanClient } from "./LoadScanClient";
@@ -14,6 +20,8 @@ export default async function ScanLoadPage({ params }: { params: Promise<{ event
   ]);
   if (!event) notFound();
 
+  let extraCandidates: ExtraMaterialCandidate[] = [];
+  let initialExtraLog: ExtraMaterialLog[] = [];
   if (context?.role === "warehouse" && context.userId && context.primaryOrganization?.id) {
     const member = await getTeamMemberByUserId(
       context.userId,
@@ -21,6 +29,11 @@ export default async function ScanLoadPage({ params }: { params: Promise<{ event
     );
     const allowed = member ? await teamMemberHasEventAccess(member.id, eventId) : false;
     if (!allowed) redirect("/events?error=Sem acesso a esta OS.");
+
+    [extraCandidates, initialExtraLog] = await Promise.all([
+      listExtraMaterialCandidates(eventId, context.primaryOrganization.id),
+      listExtraMaterialLog(eventId, context.primaryOrganization.id),
+    ]);
   }
 
   const items = event.equipment.map((e) => ({
@@ -40,7 +53,14 @@ export default async function ScanLoadPage({ params }: { params: Promise<{ event
         </p>
       </header>
 
-      <LoadScanClient eventId={eventId} eventStatus={event.status} initialItems={items} />
+      <LoadScanClient
+        eventId={eventId}
+        eventStatus={event.status}
+        initialItems={items}
+        role={context?.role ?? null}
+        extraCandidates={extraCandidates}
+        initialExtraLog={initialExtraLog}
+      />
     </>
   );
 }
