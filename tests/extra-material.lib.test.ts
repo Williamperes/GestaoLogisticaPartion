@@ -65,16 +65,36 @@ describe("listExtraMaterialCandidates", () => {
         {
           id: "eq-serial", name: "Microfone", type: "serialized", has_variants: false,
           equipment_variants: [], bulk_inventory: [],
+          equipment_units: [
+            {
+              id: "unit-free", variant_id: null, serial: "MIC-001", patrimony: "PAT-1",
+              status: "available", event_equipment_units: [],
+            },
+            {
+              id: "unit-busy", variant_id: null, serial: "MIC-002", patrimony: null,
+              status: "in_field",
+              event_equipment_units: [{
+                loaded_at: "2026-08-20T10:00:00.000Z", returned_at: null,
+                event_equipment: { events: { status: "in_field" } },
+              }],
+            },
+            {
+              id: "unit-maintenance", variant_id: null, serial: "MIC-003", patrimony: null,
+              status: "maintenance", event_equipment_units: [],
+            },
+          ],
         },
         {
           id: "eq-bulk", name: "Cabo XLR", type: "bulk", has_variants: true,
           equipment_variants: [{ id: "var-10m", label: "10 metros" }],
           bulk_inventory: [{ variant_id: "var-10m", total_qty: 12, unit: "cabos" }],
+          equipment_units: [],
         },
         {
           id: "eq-zero", name: "Sem estoque", type: "bulk", has_variants: false,
           equipment_variants: [],
           bulk_inventory: [{ variant_id: null, total_qty: 3, unit: "unidades" }],
+          equipment_units: [],
         },
       ],
       error: null,
@@ -100,11 +120,14 @@ describe("listExtraMaterialCandidates", () => {
         equipmentId: "eq-serial", equipmentName: "Microfone",
         equipmentType: "serialized", variantId: null, variantLabel: null,
         availableQty: 2, unit: "unidades",
+        availableUnits: [
+          { id: "unit-free", serial: "MIC-001", patrimony: "PAT-1" },
+        ],
       },
       {
         equipmentId: "eq-bulk", equipmentName: "Cabo XLR",
         equipmentType: "bulk", variantId: "var-10m", variantLabel: "10 metros",
-        availableQty: 4, unit: "cabos",
+        availableQty: 4, unit: "cabos", availableUnits: [],
       },
     ]);
     expect(eventQuery._calls).toEqual(expect.arrayContaining([

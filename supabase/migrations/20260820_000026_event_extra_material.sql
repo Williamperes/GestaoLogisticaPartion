@@ -109,9 +109,14 @@ create or replace function public.register_extra_serialized_material(
 returns table (
   event_equipment_id uuid,
   equipment_id uuid,
+  variant_id uuid,
   equipment_unit_id uuid,
   qty integer,
-  extra_qty integer
+  extra_qty integer,
+  added_qty integer,
+  extra_log_id uuid,
+  extra_log_created_at timestamptz,
+  extra_log_added_by uuid
 )
 language plpgsql
 security definer
@@ -128,6 +133,9 @@ declare
   current_qty integer;
   current_extra_qty integer;
   loaded_count integer;
+  log_id uuid;
+  log_created_at timestamptz;
+  log_added_by uuid;
 begin
   perform public.assert_warehouse_event_access(p_event_id);
 
@@ -168,7 +176,9 @@ begin
 
   if found then
     return query
-    select ee_id, unit_equipment_id, p_equipment_unit_id, current_qty, current_extra_qty;
+    select ee_id, unit_equipment_id, unit_variant_id, p_equipment_unit_id,
+           current_qty, current_extra_qty, 0,
+           null::uuid, null::timestamptz, null::uuid;
     return;
   end if;
 
@@ -267,7 +277,7 @@ begin
     returned_at = null,
     returned_by = null;
 
-  insert into public.event_equipment_extra_log (
+  insert into public.event_equipment_extra_log as log_entry (
     event_id,
     event_equipment_id,
     equipment_id,
@@ -285,7 +295,9 @@ begin
     1,
     clean_reason,
     auth.uid()
-  );
+  )
+  returning log_entry.id, log_entry.created_at, log_entry.added_by
+    into log_id, log_created_at, log_added_by;
 
   select count(*)::integer
     into loaded_count
@@ -305,7 +317,9 @@ begin
     into current_qty, current_extra_qty;
 
   return query
-  select ee_id, unit_equipment_id, p_equipment_unit_id, current_qty, current_extra_qty;
+  select ee_id, unit_equipment_id, unit_variant_id, p_equipment_unit_id,
+         current_qty, current_extra_qty, 1,
+         log_id, log_created_at, log_added_by;
 end;
 $$;
 
@@ -322,9 +336,14 @@ create or replace function public.register_extra_bulk_material(
 returns table (
   event_equipment_id uuid,
   equipment_id uuid,
+  variant_id uuid,
   qty integer,
   extra_qty integer,
-  bulk_loaded_qty integer
+  bulk_loaded_qty integer,
+  added_qty integer,
+  extra_log_id uuid,
+  extra_log_created_at timestamptz,
+  extra_log_added_by uuid
 )
 language plpgsql
 security definer
@@ -341,6 +360,9 @@ declare
   current_qty integer;
   current_extra_qty integer;
   current_bulk_loaded_qty integer;
+  log_id uuid;
+  log_created_at timestamptz;
+  log_added_by uuid;
 begin
   perform public.assert_warehouse_event_access(p_event_id);
 
@@ -463,7 +485,7 @@ begin
       into ee_id, current_qty, current_extra_qty, current_bulk_loaded_qty;
   end if;
 
-  insert into public.event_equipment_extra_log (
+  insert into public.event_equipment_extra_log as log_entry (
     event_id,
     event_equipment_id,
     equipment_id,
@@ -479,10 +501,13 @@ begin
     p_qty,
     clean_reason,
     auth.uid()
-  );
+  )
+  returning log_entry.id, log_entry.created_at, log_entry.added_by
+    into log_id, log_created_at, log_added_by;
 
   return query
-  select ee_id, p_equipment_id, current_qty, current_extra_qty, current_bulk_loaded_qty;
+  select ee_id, p_equipment_id, p_variant_id, current_qty, current_extra_qty,
+         current_bulk_loaded_qty, p_qty, log_id, log_created_at, log_added_by;
 end;
 $$;
 

@@ -36,16 +36,26 @@ export interface ExtraBulkInput {
 }
 
 export interface ExtraMaterialResult extends ScanResult {
+  variantId?: string | null;
   qty?: number;
   extraQty?: number;
+  addedQty?: number;
+  logId?: string;
+  addedAt?: string;
+  addedBy?: string | null;
 }
 
 type ExtraMaterialRpcRow = {
   event_equipment_id: string;
   equipment_id: string;
+  variant_id: string | null;
   equipment_unit_id?: string | null;
   qty: number;
   extra_qty: number;
+  added_qty: number;
+  extra_log_id: string | null;
+  extra_log_created_at: string | null;
+  extra_log_added_by: string | null;
 };
 
 const EXTRA_MATERIAL_ERRORS: Record<string, string> = {
@@ -112,10 +122,40 @@ function extraMaterialSuccess(row: ExtraMaterialRpcRow): ExtraMaterialResult {
     ok: true,
     ...(row.equipment_unit_id ? { unitId: row.equipment_unit_id } : {}),
     equipmentId: row.equipment_id,
+    variantId: row.variant_id,
     eventEquipmentId: row.event_equipment_id,
     qty: row.qty,
     extraQty: row.extra_qty,
+    addedQty: row.added_qty,
+    ...(row.extra_log_id ? { logId: row.extra_log_id } : {}),
+    ...(row.extra_log_created_at ? { addedAt: row.extra_log_created_at } : {}),
+    ...(row.extra_log_added_by !== null ? { addedBy: row.extra_log_added_by } : {}),
   };
+}
+
+async function registerExtraSerializedUnit(
+  eventId: string,
+  equipmentUnitId: string,
+  reason: string
+): Promise<ExtraMaterialResult> {
+  const authorizationError = await authorizeExtraMaterial(eventId);
+  if (authorizationError) return authorizationError;
+
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase
+    .rpc("register_extra_serialized_material", {
+      p_event_id: eventId,
+      p_equipment_unit_id: equipmentUnitId,
+      p_reason: reason,
+    })
+    .single();
+  if (error) return { ok: false, error: translateExtraMaterialError(error.message) };
+
+  const row = data as ExtraMaterialRpcRow | null;
+  if (!row) return { ok: false, error: "Não foi possível registrar o material extra." };
+
+  revalidateExtraMaterial(eventId);
+  return extraMaterialSuccess(row);
 }
 
 export async function registerExtraSerializedMaterial(
@@ -155,6 +195,25 @@ export async function registerExtraSerializedMaterial(
 
   revalidateExtraMaterial(normalizedEventId);
   return extraMaterialSuccess(row);
+}
+
+export async function registerExtraSerializedMaterialByUnitId(
+  eventId: string,
+  equipmentUnitId: string,
+  reason: string
+): Promise<ExtraMaterialResult> {
+  const normalizedEventId = normalizeUuid(eventId);
+  if (!normalizedEventId) return { ok: false, error: "Sem acesso a esta OS." };
+
+  const normalizedUnitId = normalizeUuid(equipmentUnitId);
+  if (!normalizedUnitId) return { ok: false, error: "Material indisponível." };
+
+  const normalizedReason = normalizeRequiredText(reason);
+  if (!normalizedReason) {
+    return { ok: false, error: "Informe o motivo do material extra." };
+  }
+
+  return registerExtraSerializedUnit(normalizedEventId, normalizedUnitId, normalizedReason);
 }
 
 export async function registerExtraBulkMaterial(

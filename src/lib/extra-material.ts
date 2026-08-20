@@ -9,6 +9,13 @@ export interface ExtraMaterialCandidate {
   variantLabel: string | null;
   availableQty: number;
   unit: string;
+  availableUnits: ExtraMaterialUnitCandidate[];
+}
+
+export interface ExtraMaterialUnitCandidate {
+  id: string;
+  serial: string | null;
+  patrimony: string | null;
 }
 
 export interface ExtraMaterialLog {
@@ -37,7 +44,37 @@ type CandidateEquipmentRow = {
     total_qty: number;
     unit: string;
   }[] | null;
+  equipment_units: {
+    id: string;
+    variant_id: string | null;
+    serial: string | null;
+    patrimony: string | null;
+    status: string;
+    event_equipment_units: {
+      loaded_at: string | null;
+      returned_at: string | null;
+      event_equipment: {
+        events: { status: string } | null;
+      } | null;
+    }[] | null;
+  }[] | null;
 };
+
+function isUnitSelectable(
+  unit: NonNullable<CandidateEquipmentRow["equipment_units"]>[number]
+): boolean {
+  if (unit.status === "maintenance" || unit.status === "inactive") return false;
+
+  return !(unit.event_equipment_units ?? []).some((assignment) => {
+    const eventStatus = assignment.event_equipment?.events?.status;
+    return Boolean(
+      assignment.loaded_at &&
+      !assignment.returned_at &&
+      eventStatus !== "cancelled" &&
+      eventStatus !== "completed"
+    );
+  });
+}
 
 export async function listExtraMaterialCandidates(
   eventId: string,
@@ -66,7 +103,14 @@ export async function listExtraMaterialCandidates(
       .select(`
         id, name, type, has_variants,
         equipment_variants (id, label),
-        bulk_inventory (variant_id, total_qty, unit)
+        bulk_inventory (variant_id, total_qty, unit),
+        equipment_units (
+          id, variant_id, serial, patrimony, status,
+          event_equipment_units (
+            loaded_at, returned_at,
+            event_equipment (events (status))
+          )
+        )
       `)
       .eq("organization_id", organizationId)
       .order("name", { ascending: true }),
@@ -92,6 +136,21 @@ export async function listExtraMaterialCandidates(
       const bulk = (equipment.bulk_inventory ?? []).find(
         (entry) => entry.variant_id === variant.id
       );
+      const availableUnits = equipment.type === "serialized"
+        ? (equipment.equipment_units ?? [])
+            .filter((unit) => unit.variant_id === variant.id && isUnitSelectable(unit))
+            .sort((left, right) =>
+              (left.serial ?? left.patrimony ?? left.id).localeCompare(
+                right.serial ?? right.patrimony ?? right.id
+              )
+            )
+            .slice(0, availableQty)
+            .map((unit) => ({
+              id: unit.id,
+              serial: unit.serial,
+              patrimony: unit.patrimony,
+            }))
+        : [];
       candidates.push({
         equipmentId: equipment.id,
         equipmentName: equipment.name,
@@ -100,6 +159,7 @@ export async function listExtraMaterialCandidates(
         variantLabel: variant.label,
         availableQty,
         unit: equipment.type === "bulk" ? (bulk?.unit ?? "unidades") : "unidades",
+        availableUnits,
       });
     }
   }

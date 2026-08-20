@@ -102,4 +102,37 @@ describe("migration 026 — material extra", () => {
     expect(returnBulk).toMatch(/new_returned_qty := returned_qty \+ p_qty/);
     expect(returnBulk).toMatch(/set bulk_returned_qty = new_returned_qty/);
   });
+
+  it("distingue inclusão serializada real de repetição idempotente e retorna o log canônico", () => {
+    const registerSerialized = functionDefinition("register_extra_serialized_material");
+
+    expect(registerSerialized).toMatch(/variant_id uuid/);
+    expect(registerSerialized).toMatch(/added_qty integer/);
+    expect(registerSerialized).toMatch(/extra_log_id uuid/);
+    expect(registerSerialized).toMatch(/extra_log_created_at timestamptz/);
+    expect(registerSerialized).toMatch(/extra_log_added_by uuid/);
+    expect(registerSerialized).toMatch(
+      /select ee_id, unit_equipment_id, unit_variant_id, p_equipment_unit_id,[\s\S]*0,[\s\S]*null::uuid,[\s\S]*null::timestamptz,[\s\S]*null::uuid/
+    );
+    expect(registerSerialized).toMatch(
+      /returning log_entry\.id, log_entry\.created_at, log_entry\.added_by/
+    );
+    expect(registerSerialized).toMatch(
+      /select ee_id, unit_equipment_id, unit_variant_id, p_equipment_unit_id,[\s\S]*1,[\s\S]*log_id,[\s\S]*log_created_at,[\s\S]*log_added_by/
+    );
+  });
+
+  it("retorna a identidade canônica do log bulk", () => {
+    const registerBulk = functionDefinition("register_extra_bulk_material");
+
+    expect(registerBulk).toMatch(/variant_id uuid/);
+    expect(registerBulk).toMatch(/added_qty integer/);
+    expect(registerBulk).toMatch(/extra_log_id uuid/);
+    expect(registerBulk).toMatch(
+      /returning log_entry\.id, log_entry\.created_at, log_entry\.added_by/
+    );
+    expect(registerBulk).toMatch(
+      /select ee_id, p_equipment_id, p_variant_id,[\s\S]*p_qty,[\s\S]*log_id,[\s\S]*log_created_at,[\s\S]*log_added_by/
+    );
+  });
 });

@@ -6,12 +6,17 @@ import { toast } from "sonner";
 
 import {
   registerExtraBulkMaterial,
+  registerExtraSerializedMaterialByUnitId,
   registerExtraSerializedMaterial,
   type ExtraMaterialResult,
 } from "@/app/(dashboard)/scan/actions";
 import { QrScanner } from "@/components/inventory/QrScanner";
 import { formatDateTimeBR } from "@/lib/dates";
-import type { ExtraMaterialCandidate, ExtraMaterialLog } from "@/lib/extra-material";
+import type {
+  ExtraMaterialCandidate,
+  ExtraMaterialLog,
+  ExtraMaterialUnitCandidate,
+} from "@/lib/extra-material";
 import { scanFeedbackError, scanFeedbackSuccess } from "@/lib/scanFeedback";
 
 interface ExtraMaterialPanelProps {
@@ -26,6 +31,14 @@ function candidateLabel(candidate: ExtraMaterialCandidate): string {
     : candidate.equipmentName;
 }
 
+function unitLabel(unit: ExtraMaterialUnitCandidate): string {
+  const identifiers = [
+    unit.serial ? `Série ${unit.serial}` : null,
+    unit.patrimony ? `Patrimônio ${unit.patrimony}` : null,
+  ].filter((value): value is string => value !== null);
+  return identifiers.length > 0 ? identifiers.join(" · ") : `Unidade ${unit.id}`;
+}
+
 export function ExtraMaterialPanel({
   eventId,
   candidates,
@@ -34,8 +47,10 @@ export function ExtraMaterialPanel({
   const [reason, setReason] = useState("");
   const [search, setSearch] = useState("");
   const [selectedBulk, setSelectedBulk] = useState<ExtraMaterialCandidate | null>(null);
+  const [selectedSerialized, setSelectedSerialized] = useState<ExtraMaterialCandidate | null>(null);
+  const [selectedUnitId, setSelectedUnitId] = useState("");
   const [bulkQty, setBulkQty] = useState(1);
-  const [log, setLog] = useState(initialLog);
+  const [optimisticLog, setOptimisticLog] = useState<ExtraMaterialLog[]>([]);
   const [busy, setBusy] = useState(false);
 
   const filteredCandidates = useMemo(() => {
@@ -46,6 +61,14 @@ export function ExtraMaterialPanel({
     );
   }, [candidates, search]);
 
+  const visibleLog = useMemo(() => {
+    const canonicalIds = new Set(initialLog.map((entry) => entry.id));
+    return [
+      ...optimisticLog.filter((entry) => !canonicalIds.has(entry.id)),
+      ...initialLog,
+    ].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  }, [initialLog, optimisticLog]);
+
   function requireReason(): string | null {
     const cleanReason = reason.trim();
     if (cleanReason) return cleanReason;
@@ -53,29 +76,61 @@ export function ExtraMaterialPanel({
     return null;
   }
 
-  function prependLog(
+  function prependCanonicalLog(
     candidate: ExtraMaterialCandidate | undefined,
     result: ExtraMaterialResult,
-    qty: number,
     cleanReason: string
-  ) {
-    setLog((current) => [
+  ): boolean {
+    const { eventEquipmentId, equipmentId, logId, addedAt, addedQty } = result;
+    if (
+      !candidate ||
+      !eventEquipmentId ||
+      !equipmentId ||
+      !logId ||
+      !addedAt ||
+      !addedQty ||
+      addedQty <= 0
+    ) {
+      return false;
+    }
+
+    setOptimisticLog((current) => [
       {
-        id: `local-${Date.now()}-${current.length}`,
-        eventEquipmentId: result.eventEquipmentId ?? "",
-        equipmentId: result.equipmentId ?? candidate?.equipmentId ?? "",
-        equipmentName: candidate?.equipmentName ?? "Material serializado",
-        variantId: candidate?.variantId ?? null,
-        variantLabel: candidate?.variantLabel ?? null,
+        id: logId,
+        eventEquipmentId,
+        equipmentId,
+        equipmentName: candidate.equipmentName,
+        variantId: result.variantId ?? null,
+        variantLabel: candidate.variantLabel,
         equipmentUnitId: result.unitId ?? null,
-        qty,
+        qty: addedQty,
         reason: cleanReason,
-        addedBy: null,
+        addedBy: result.addedBy ?? null,
         addedByName: "Você",
-        createdAt: new Date().toISOString(),
+        createdAt: addedAt,
       },
       ...current,
     ]);
+    return true;
+  }
+
+  function handleSuccessfulRegistration(
+    result: ExtraMaterialResult,
+    candidate: ExtraMaterialCandidate | undefined,
+    cleanReason: string
+  ) {
+    if (result.addedQty === 0) {
+      toast.info("Esta unidade já estava carregada nesta OS.");
+      return;
+    }
+
+    if (!prependCanonicalLog(candidate, result, cleanReason)) {
+      toast.error("Material registrado, mas o histórico ainda não foi atualizado.");
+      return;
+    }
+
+    scanFeedbackSuccess();
+    toast.success("Material extra registrado.");
   }
 
   async function handleSerializedScan(qrCode: string) {
@@ -93,11 +148,12 @@ export function ExtraMaterialPanel({
       }
 
       const candidate = candidates.find(
-        (item) => item.equipmentId === result.equipmentId && item.equipmentType === "serialized"
+        (item) =>
+          item.equipmentId === result.equipmentId &&
+          item.variantId === result.variantId &&
+          item.equipmentType === "serialized"
       );
-      prependLog(candidate, result, 1, cleanReason);
-      scanFeedbackSuccess();
-      toast.success("Material extra registrado.");
+      handleSuccessfulRegistration(result, candidate, cleanReason);
     } catch {
       scanFeedbackError();
       toast.error("Não foi possível registrar o material extra.");
@@ -131,11 +187,45 @@ export function ExtraMaterialPanel({
         return;
       }
 
-      prependLog(selectedBulk, result, bulkQty, cleanReason);
+      handleSuccessfulRegistration(result, selectedBulk, cleanReason);
       setSelectedBulk(null);
       setBulkQty(1);
-      scanFeedbackSuccess();
-      toast.success("Material extra registrado.");
+    } catch {
+      scanFeedbackError();
+      toast.error("Não foi possível registrar o material extra.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleSerializedSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (busy || !selectedSerialized || !selectedUnitId) return;
+    const cleanReason = requireReason();
+    if (!cleanReason) return;
+
+    setBusy(true);
+    try {
+      const result = await registerExtraSerializedMaterialByUnitId(
+        eventId,
+        selectedUnitId,
+        cleanReason
+      );
+      if (!result.ok) {
+        scanFeedbackError();
+        toast.error(result.error ?? "Não foi possível registrar o material extra.");
+        return;
+      }
+
+      const candidate = candidates.find(
+        (item) =>
+          item.equipmentId === result.equipmentId &&
+          item.variantId === result.variantId &&
+          item.equipmentType === "serialized"
+      );
+      handleSuccessfulRegistration(result, candidate, cleanReason);
+      setSelectedSerialized(null);
+      setSelectedUnitId("");
     } catch {
       scanFeedbackError();
       toast.error("Não foi possível registrar o material extra.");
@@ -209,11 +299,13 @@ export function ExtraMaterialPanel({
                       {candidate.equipmentType === "bulk" ? "lote" : "serializado"}
                     </p>
                   </div>
-                  {candidate.equipmentType === "bulk" && (
+                  {candidate.equipmentType === "bulk" ? (
                     <button
                       type="button"
                       onClick={() => {
                         setSelectedBulk(candidate);
+                        setSelectedSerialized(null);
+                        setSelectedUnitId("");
                         setBulkQty(1);
                       }}
                       disabled={busy}
@@ -222,7 +314,22 @@ export function ExtraMaterialPanel({
                     >
                       Selecionar
                     </button>
-                  )}
+                  ) : candidate.availableUnits.length > 0 ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedSerialized(candidate);
+                        setSelectedUnitId("");
+                        setSelectedBulk(null);
+                        setBulkQty(1);
+                      }}
+                      disabled={busy}
+                      aria-label={`Selecionar unidade de ${candidateLabel(candidate)}`}
+                      className="shrink-0 rounded-lg border border-border px-3 py-1.5 text-xs font-semibold transition hover:bg-muted disabled:opacity-50"
+                    >
+                      Escolher unidade
+                    </button>
+                  ) : null}
                 </li>
               );
             })}
@@ -231,6 +338,54 @@ export function ExtraMaterialPanel({
           <p className="rounded-lg border border-dashed border-border p-3 text-center text-sm text-muted-foreground">
             Nenhum material disponível encontrado.
           </p>
+        )}
+
+        {selectedSerialized && (
+          <form
+            aria-label="Adicionar unidade serializada"
+            onSubmit={handleSerializedSubmit}
+            className="space-y-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3"
+          >
+            <p className="text-sm font-semibold">{candidateLabel(selectedSerialized)}</p>
+            <label htmlFor="extra-serialized-unit" className="block text-xs font-medium">
+              Unidade de {candidateLabel(selectedSerialized)}
+            </label>
+            <select
+              id="extra-serialized-unit"
+              value={selectedUnitId}
+              onChange={(event) => setSelectedUnitId(event.target.value)}
+              required
+              className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm"
+            >
+              <option value="">Selecione uma unidade</option>
+              {selectedSerialized.availableUnits.map((unit) => (
+                <option key={unit.id} value={unit.id}>
+                  {unitLabel(unit)}
+                </option>
+              ))}
+            </select>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedSerialized(null);
+                  setSelectedUnitId("");
+                }}
+                disabled={busy}
+                className="flex-1 rounded-lg border border-border px-3 py-2 text-sm font-semibold disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="submit"
+                disabled={busy || !selectedUnitId}
+                className="inline-flex flex-1 items-center justify-center gap-2 rounded-lg bg-amber-500 px-3 py-2 text-sm font-semibold text-white transition hover:bg-amber-600 disabled:opacity-50"
+              >
+                <PackagePlus className="h-4 w-4" />
+                {busy ? "Adicionando..." : "Adicionar unidade"}
+              </button>
+            </div>
+          </form>
         )}
 
         {selectedBulk && (
@@ -283,13 +438,13 @@ export function ExtraMaterialPanel({
         <h2 className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
           Materiais extras registrados
         </h2>
-        {log.length > 0 ? (
+        {visibleLog.length > 0 ? (
           <ul
             className="space-y-2"
             aria-label="Histórico de materiais extras"
             aria-live="polite"
           >
-            {log.map((entry) => (
+            {visibleLog.map((entry) => (
               <li key={entry.id} className="rounded-xl border border-border bg-card p-3 text-sm">
                 <div className="flex items-start justify-between gap-3">
                   <p className="font-medium">
