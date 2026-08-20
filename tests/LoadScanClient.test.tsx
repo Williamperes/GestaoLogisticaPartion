@@ -175,6 +175,77 @@ describe("LoadScanClient — render default", () => {
     expect(screen.queryByRole("button", { name: "Material a mais" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Motivo do material extra")).not.toBeInTheDocument();
   });
+
+  it("reconcilia itens canônicos após material extra sem apagar uma bipagem local válida", async () => {
+    const user = userEvent.setup();
+    const { rerender } = renderClient({
+      role: "warehouse",
+      extraCandidates,
+    });
+
+    await user.click(screen.getAllByRole("button", { name: "Bipar 1" })[0]);
+    await waitFor(() => expect(screen.getByText("4/5 unidades")).toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: "Material a mais" }));
+    const repeatedCanonicalSnapshot = items.map((item) => ({ ...item }));
+    rerender(
+      <LoadScanClient
+        {...defaultProps}
+        role="warehouse"
+        initialItems={repeatedCanonicalSnapshot}
+        extraCandidates={extraCandidates}
+        initialExtraLog={initialExtraLog}
+      />
+    );
+    await user.click(screen.getByRole("button", { name: "Bipar" }));
+
+    expect(screen.getByText("4/5 unidades")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Material a mais" }));
+    const afterExistingExtra = [
+      { ...items[0], qty: 4, loadedUnitsCount: 3 },
+      items[1],
+    ];
+    rerender(
+      <LoadScanClient
+        {...defaultProps}
+        role="warehouse"
+        initialItems={afterExistingExtra}
+        extraCandidates={extraCandidates}
+        initialExtraLog={initialExtraLog}
+      />
+    );
+    await user.click(screen.getByRole("button", { name: "Bipar" }));
+
+    expect(screen.getByText("5/6 unidades")).toBeInTheDocument();
+    expect(screen.getByText("Cabo XLR · 10m")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Material a mais" }));
+    const afterNewExtra = [
+      ...afterExistingExtra,
+      {
+        id: "e3",
+        equipmentName: "Adaptador extra",
+        variantLabel: null,
+        qty: 2,
+        loadedUnitsCount: 2,
+      },
+    ];
+    rerender(
+      <LoadScanClient
+        {...defaultProps}
+        role="warehouse"
+        initialItems={afterNewExtra}
+        extraCandidates={extraCandidates}
+        initialExtraLog={initialExtraLog}
+      />
+    );
+    await user.click(screen.getByRole("button", { name: "Bipar" }));
+
+    expect(screen.getByText("7/8 unidades")).toBeInTheDocument();
+    expect(screen.getByText("Carregados (2)")).toBeInTheDocument();
+    expect(screen.getByText("Adaptador extra")).toBeInTheDocument();
+  });
 });
 
 describe("LoadScanClient — scan", () => {

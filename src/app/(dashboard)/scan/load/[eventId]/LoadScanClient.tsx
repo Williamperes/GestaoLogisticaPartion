@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Check, Minus, Plus, Truck } from "lucide-react";
 import { toast } from "sonner";
@@ -50,11 +50,38 @@ export function LoadScanClient({
 }: LoadScanClientProps) {
   const router = useRouter();
   const [items, setItems] = useState(initialItems);
+  const previousCanonicalItems = useRef({ eventId, items: initialItems });
   const [mode, setMode] = useState<Mode>("load");
   const [busy, setBusy] = useState(false);
   const [finalizing, setFinalizing] = useState(false);
   const isWarehouse = role === "warehouse";
   const showsExtraPanel = isWarehouse && mode === "extra";
+
+  useEffect(() => {
+    const previousCanonical = previousCanonicalItems.current;
+    previousCanonicalItems.current = { eventId, items: initialItems };
+
+    if (previousCanonical.eventId !== eventId) {
+      setItems(initialItems);
+      return;
+    }
+
+    const previousById = new Map(previousCanonical.items.map((item) => [item.id, item]));
+    setItems((currentItems) => {
+      const currentById = new Map(currentItems.map((item) => [item.id, item]));
+      return initialItems.map((canonicalItem) => {
+        const previousItem = previousById.get(canonicalItem.id);
+        const currentItem = currentById.get(canonicalItem.id);
+        if (!previousItem || !currentItem) return canonicalItem;
+
+        const loadedUnitsCount =
+          canonicalItem.loadedUnitsCount === previousItem.loadedUnitsCount
+            ? Math.min(currentItem.loadedUnitsCount, canonicalItem.qty)
+            : canonicalItem.loadedUnitsCount;
+        return { ...canonicalItem, loadedUnitsCount };
+      });
+    });
+  }, [eventId, initialItems]);
 
   const { pending, done } = useMemo(() => {
     const pending: Item[] = [];
