@@ -101,6 +101,72 @@ $$;
 
 revoke execute on function public.assert_warehouse_event_access(uuid) from public;
 
+-- O retorno também pode ser concluído por papéis operacionais da organização.
+-- Para warehouse, o vínculo explícito com a OS continua obrigatório. O lock da
+-- OS serializa conclusão e qualquer mutação de devolução.
+create or replace function public.assert_event_return_access(target_event_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  org_id uuid;
+  event_state public.event_status;
+  caller_role public.app_role;
+begin
+  if auth.uid() is null then
+    raise exception 'EXTRA_NOT_AUTHENTICATED' using errcode = 'P0001';
+  end if;
+
+  select e.organization_id, e.status
+    into org_id, event_state
+  from public.events e
+  where e.id = target_event_id
+  for update;
+
+  if not found then
+    raise exception 'EXTRA_FORBIDDEN' using errcode = 'P0001';
+  end if;
+
+  if not public.has_org_role(org_id, array[
+      'super_admin'::public.app_role,
+      'admin'::public.app_role,
+      'operations'::public.app_role,
+      'warehouse'::public.app_role
+    ]) then
+    raise exception 'EXTRA_FORBIDDEN' using errcode = 'P0001';
+  end if;
+
+  select om.role
+    into caller_role
+  from public.organization_members om
+  where om.user_id = auth.uid()
+    and om.organization_id = org_id;
+
+  if caller_role = 'warehouse'::public.app_role and not exists (
+    select 1
+    from public.team_members tm
+    join public.event_date_team_members edtm on edtm.team_member_id = tm.id
+    join public.event_dates ed on ed.id = edtm.event_date_id
+    where tm.user_id = auth.uid()
+      and tm.organization_id = org_id
+      and ed.event_id = target_event_id
+  ) then
+    raise exception 'EXTRA_FORBIDDEN' using errcode = 'P0001';
+  end if;
+
+  if event_state not in (
+    'ready_to_load'::public.event_status,
+    'in_field'::public.event_status
+  ) then
+    raise exception 'EXTRA_EVENT_STATE' using errcode = 'P0001';
+  end if;
+end;
+$$;
+
+revoke execute on function public.assert_event_return_access(uuid) from public;
+
 create or replace function public.register_extra_serialized_material(
   p_event_id uuid,
   p_equipment_unit_id uuid,
@@ -555,7 +621,8 @@ begin
 
   update public.event_equipment ee
   set bulk_returned_qty = new_returned_qty
-  where ee.id = p_event_equipment_id;
+  where ee.id = p_event_equipment_id
+    and ee.event_id = p_event_id;
 
   return new_returned_qty;
 end;
@@ -605,7 +672,8 @@ begin
 
   update public.event_equipment ee
   set bulk_returned_qty = new_returned_qty
-  where ee.id = p_event_equipment_id;
+  where ee.id = p_event_equipment_id
+    and ee.event_id = p_event_id;
 
   return new_returned_qty;
 end;
@@ -613,3 +681,172 @@ $$;
 
 revoke execute on function public.unreturn_bulk_material(uuid, uuid, integer) from public;
 grant execute on function public.unreturn_bulk_material(uuid, uuid, integer) to authenticated;
+
+-- Verifica pendências e conclui a OS na mesma transação. A ordem fixa dos
+-- locks evita que um retorno concorrente atravesse a verificação.
+create or replace function public.finalize_event_return(p_event_id uuid)
+returns boolean
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  perform public.assert_event_return_access(p_event_id);
+
+  perform 1
+  from public.event_equipment_units eeu
+  join public.event_equipment ee on ee.id = eeu.event_equipment_id
+  where ee.event_id = p_event_id
+  order by eeu.id
+  for update of eeu;
+
+  perform 1
+  from public.event_equipment ee
+  where ee.event_id = p_event_id
+  order by ee.id
+  for update of ee;
+
+  if exists (
+    select 1
+    from public.event_equipment ee
+    join public.equipment equipment on equipment.id = ee.equipment_id
+    where ee.event_id = p_event_id
+      and equipment.type = 'bulk'::public.equipment_type
+      and ee.bulk_returned_qty < ee.bulk_loaded_qty
+  ) or exists (
+    select 1
+    from public.event_equipment_units eeu
+    join public.event_equipment ee on ee.id = eeu.event_equipment_id
+    join public.equipment equipment on equipment.id = ee.equipment_id
+    where ee.event_id = p_event_id
+      and equipment.type = 'serialized'::public.equipment_type
+      and eeu.loaded_at is not null
+      and eeu.returned_at is null
+  ) then
+    raise exception 'EXTRA_RETURN_PENDING' using errcode = 'P0001';
+  end if;
+
+  update public.events
+  set status = 'completed'::public.event_status
+  where id = p_event_id
+    and status = 'in_field'::public.event_status;
+
+  if not found then
+    raise exception 'EXTRA_EVENT_STATE' using errcode = 'P0001';
+  end if;
+
+  return true;
+end;
+$$;
+
+revoke execute on function public.finalize_event_return(uuid) from public;
+grant execute on function public.finalize_event_return(uuid) to authenticated;
+
+-- Desfaz exatamente uma devolução serializada, por unidade (QR) ou pela linha
+-- da OS. Estado, tenant, vínculo e atualização agregada ficam sob os mesmos
+-- locks da conclusão.
+create or replace function public.unreturn_serialized_material(
+  p_event_id uuid,
+  p_event_equipment_id uuid,
+  p_equipment_unit_id uuid
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  ee_id uuid;
+  equipment_id uuid;
+  target_row_id uuid;
+  target_unit_id uuid;
+  target_qty integer;
+  returned_count integer;
+begin
+  perform public.assert_event_return_access(p_event_id);
+
+  if (p_event_equipment_id is null) = (p_equipment_unit_id is null) then
+    raise exception 'EXTRA_RETURN_RANGE' using errcode = 'P0001';
+  end if;
+
+  if p_event_equipment_id is not null then
+    select ee.id, ee.equipment_id, ee.qty
+      into ee_id, equipment_id, target_qty
+    from public.event_equipment ee
+    join public.equipment equipment on equipment.id = ee.equipment_id
+    where ee.id = p_event_equipment_id
+      and ee.event_id = p_event_id
+      and equipment.type = 'serialized'::public.equipment_type;
+  else
+    select ee.id, ee.equipment_id, ee.qty
+      into ee_id, equipment_id, target_qty
+    from public.event_equipment_units eeu
+    join public.event_equipment ee on ee.id = eeu.event_equipment_id
+    join public.equipment equipment on equipment.id = ee.equipment_id
+    where ee.event_id = p_event_id
+      and eeu.equipment_unit_id = p_equipment_unit_id
+      and equipment.type = 'serialized'::public.equipment_type
+    order by ee.id
+    limit 1;
+  end if;
+
+  if not found then
+    raise exception 'EXTRA_RETURN_RANGE' using errcode = 'P0001';
+  end if;
+
+  select eeu.id, eeu.equipment_unit_id
+    into target_row_id, target_unit_id
+  from public.event_equipment_units eeu
+  where eeu.event_equipment_id = ee_id
+    and eeu.loaded_at is not null
+    and eeu.returned_at is not null
+    and (p_equipment_unit_id is null or eeu.equipment_unit_id = p_equipment_unit_id)
+  order by eeu.returned_at desc, eeu.id
+  limit 1
+  for update of eeu;
+
+  if not found then
+    raise exception 'EXTRA_RETURN_RANGE' using errcode = 'P0001';
+  end if;
+
+  perform 1
+  from public.event_equipment ee
+  where ee.id = ee_id
+    and ee.event_id = p_event_id
+  for update of ee;
+
+  update public.event_equipment_units
+  set returned_at = null,
+      returned_by = null
+  where id = target_row_id;
+
+  select count(*)::integer
+    into returned_count
+  from public.event_equipment_units eeu
+  where eeu.event_equipment_id = ee_id
+    and eeu.loaded_at is not null
+    and eeu.returned_at is not null;
+
+  update public.event_equipment ee
+  set returned_at = case
+        when returned_count >= target_qty then coalesce(ee.returned_at, timezone('utc', now()))
+        else null
+      end,
+      returned_by = case
+        when returned_count >= target_qty then coalesce(ee.returned_by, auth.uid())
+        else null
+      end
+  where ee.id = ee_id
+    and ee.event_id = p_event_id;
+
+  return jsonb_build_object(
+    'event_equipment_id', ee_id,
+    'equipment_id', equipment_id,
+    'equipment_unit_id', target_unit_id,
+    'returned_units_count', returned_count
+  );
+end;
+$$;
+
+revoke execute on function public.unreturn_serialized_material(uuid, uuid, uuid) from public;
+grant execute on function public.unreturn_serialized_material(uuid, uuid, uuid) to authenticated;

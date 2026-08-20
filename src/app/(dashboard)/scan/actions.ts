@@ -68,6 +68,14 @@ const EXTRA_MATERIAL_ERRORS: Record<string, string> = {
   EXTRA_UNIT_CONFLICT: "Esta unidade já está carregada em outra OS.",
   EXTRA_RETURN_RANGE: "Quantidade de devolução inválida.",
 };
+const RETURN_ERRORS: Record<string, string> = {
+  EXTRA_NOT_AUTHENTICATED: "Sua sessão expirou. Entre novamente.",
+  EXTRA_FORBIDDEN: "Sem acesso a esta OS.",
+  EXTRA_EVENT_STATE: "Esta OS não permite alterar devoluções.",
+  EXTRA_RETURN_PENDING: "Ainda há equipamentos carregados pendentes de devolução.",
+  EXTRA_RETURN_RANGE: "Quantidade de devolução inválida.",
+};
+const RETURN_ROLES = new Set(["super_admin", "admin", "operations", "warehouse"]);
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -106,11 +114,91 @@ async function authorizeExtraMaterial(eventId: string): Promise<ExtraMaterialRes
   return hasAccess ? null : { ok: false, error: "Sem acesso a esta OS." };
 }
 
+async function authorizeEventReturn(eventId: string): Promise<ScanResult | null> {
+  const context = await getCurrentUserContext();
+  if (!context) return { ok: false, error: "Não autenticado" };
+  if (!context.role || !RETURN_ROLES.has(context.role)) {
+    return { ok: false, error: "Sem acesso a esta OS." };
+  }
+
+  const organizationId = context.primaryOrganization?.id;
+  if (!organizationId) return { ok: false, error: "Sem acesso a esta OS." };
+  if (context.role !== "warehouse") return null;
+
+  const member = await getTeamMemberByUserId(context.userId, organizationId);
+  const hasAccess = member ? await teamMemberHasEventAccess(member.id, eventId) : false;
+  return hasAccess ? null : { ok: false, error: "Sem acesso a esta OS." };
+}
+
 function translateExtraMaterialError(message: string): string {
   for (const [code, translated] of Object.entries(EXTRA_MATERIAL_ERRORS)) {
     if (message.includes(code)) return translated;
   }
   return message;
+}
+
+function translateReturnError(message: string): string {
+  for (const [code, translated] of Object.entries(RETURN_ERRORS)) {
+    if (message.includes(code)) return translated;
+  }
+  return message;
+}
+
+function revalidateReturn(eventId: string) {
+  revalidatePath(`/scan/return/${eventId}`);
+  revalidatePath(`/events/${eventId}`);
+}
+
+type SerializedUnreturnRpcRow = {
+  event_equipment_id: string;
+  equipment_id: string;
+  equipment_unit_id: string;
+  returned_units_count: number;
+};
+
+async function callUnreturnSerializedMaterial(
+  eventId: string,
+  eventEquipmentId: string | null,
+  equipmentUnitId: string | null
+): Promise<ScanResult> {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase.rpc("unreturn_serialized_material", {
+    p_event_id: eventId,
+    p_event_equipment_id: eventEquipmentId,
+    p_equipment_unit_id: equipmentUnitId,
+  });
+  if (error) return { ok: false, error: translateReturnError(error.message) };
+  if (!isRecord(data)) return { ok: false, error: "Não foi possível desfazer a devolução." };
+
+  const row = data as SerializedUnreturnRpcRow;
+  if (
+    typeof row.event_equipment_id !== "string" ||
+    typeof row.equipment_id !== "string" ||
+    typeof row.equipment_unit_id !== "string" ||
+    !Number.isSafeInteger(row.returned_units_count) ||
+    row.returned_units_count < 0
+  ) {
+    return { ok: false, error: "Não foi possível desfazer a devolução." };
+  }
+
+  revalidateReturn(eventId);
+  return {
+    ok: true,
+    unitId: row.equipment_unit_id,
+    equipmentId: row.equipment_id,
+    eventEquipmentId: row.event_equipment_id,
+    returnedUnitsCount: row.returned_units_count,
+  };
+}
+
+async function unreturnSerializedMaterial(
+  eventId: string,
+  eventEquipmentId: string | null,
+  equipmentUnitId: string | null
+): Promise<ScanResult> {
+  const authorizationError = await authorizeEventReturn(eventId);
+  if (authorizationError) return authorizationError;
+  return callUnreturnSerializedMaterial(eventId, eventEquipmentId, equipmentUnitId);
 }
 
 function revalidateExtraMaterial(eventId: string) {
@@ -593,41 +681,15 @@ export async function unscanLoadUnit(eventId: string, qrCode: string): Promise<S
 }
 
 export async function unscanReturnUnit(eventId: string, qrCode: string): Promise<ScanResult> {
-  const user = await getCurrentAuthUser();
-  if (!user) return { ok: false, error: "Não autenticado" };
-
   const trimmed = qrCode.trim();
   if (!trimmed) return { ok: false, error: "QR vazio" };
 
+  const authorizationError = await authorizeEventReturn(eventId);
+  if (authorizationError) return authorizationError;
+
   const unit = await getEquipmentUnitByQrCode(trimmed);
   if (!unit) return { ok: false, error: "QR não encontrado" };
-
-  const supabase = createSupabaseAdminClient();
-  const { data: eeRow, error: eeErr } = await findEeRow(
-    supabase,
-    eventId,
-    unit.equipmentId,
-    unit.variantId
-  );
-  if (eeErr) return { ok: false, error: eeErr.message };
-  if (!eeRow) return { ok: false, error: "Este equipamento não está vinculado à OS" };
-
-  const { data: euRow, error: euErr } = await supabase
-    .from("event_equipment_units")
-    .update({ returned_at: null, returned_by: null })
-    .eq("event_equipment_id", eeRow.id)
-    .eq("equipment_unit_id", unit.id)
-    .not("returned_at", "is", null)
-    .select("id")
-    .maybeSingle();
-  if (euErr) return { ok: false, error: euErr.message };
-  if (!euRow) return { ok: false, error: "Unidade não estava retornada" };
-
-  await syncReturnedState(supabase, eeRow.id, eeRow.qty);
-
-  revalidatePath(`/scan/return/${eventId}`);
-  revalidatePath(`/events/${eventId}`);
-  return { ok: true, unitId: unit.id, equipmentId: unit.equipmentId, eventEquipmentId: eeRow.id };
+  return callUnreturnSerializedMaterial(eventId, null, unit.id);
 }
 
 // ── Finalização da OS pelo fluxo de scan ─────────────────────────────────────
@@ -664,64 +726,17 @@ export async function finalizeLoad(eventId: string): Promise<ScanResult> {
 }
 
 export async function finalizeReturn(eventId: string): Promise<ScanResult> {
-  const user = await getCurrentAuthUser();
-  if (!user) return { ok: false, error: "Não autenticado" };
+  const authorizationError = await authorizeEventReturn(eventId);
+  if (authorizationError) return authorizationError;
 
-  const supabase = createSupabaseAdminClient();
-  const { data: ev, error: evErr } = await supabase
-    .from("events")
-    .select("status")
-    .eq("id", eventId)
-    .maybeSingle();
-  if (evErr) return { ok: false, error: evErr.message };
-  if (!ev) return { ok: false, error: "OS não encontrada" };
-  if (ev.status === "completed") return { ok: true };
-  if (ev.status !== "in_field")
-    return { ok: false, error: "Feche a carga (OS em campo) antes de concluir o retorno." };
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase.rpc("finalize_event_return", {
+    p_event_id: eventId,
+  });
+  if (error) return { ok: false, error: translateReturnError(error.message) };
+  if (data !== true) return { ok: false, error: "Não foi possível concluir a devolução." };
 
-  const { data: equipmentRows, error: equipmentErr } = await supabase
-    .from("event_equipment")
-    .select(`
-      bulk_loaded_qty,
-      bulk_returned_qty,
-      equipment (type),
-      event_equipment_units (loaded_at, returned_at)
-    `)
-    .eq("event_id", eventId);
-  if (equipmentErr) return { ok: false, error: equipmentErr.message };
-
-  type ReturnableEquipmentRow = {
-    bulk_loaded_qty: number | null;
-    bulk_returned_qty: number | null;
-    equipment: { type: "serialized" | "bulk" } | null;
-    event_equipment_units: Array<{
-      loaded_at: string | null;
-      returned_at: string | null;
-    }> | null;
-  };
-  const hasPendingReturn = ((equipmentRows ?? []) as unknown as ReturnableEquipmentRow[]).some(
-    (row) =>
-      row.equipment?.type === "bulk"
-        ? (row.bulk_returned_qty ?? 0) < (row.bulk_loaded_qty ?? 0)
-        : (row.event_equipment_units ?? []).some(
-            (unit) => unit.loaded_at !== null && unit.returned_at === null
-          )
-  );
-  if (hasPendingReturn) {
-    return {
-      ok: false,
-      error: "Ainda há equipamentos carregados pendentes de devolução.",
-    };
-  }
-
-  const { error } = await supabase
-    .from("events")
-    .update({ status: "completed" })
-    .eq("id", eventId);
-  if (error) return { ok: false, error: error.message };
-
-  revalidatePath(`/scan/return/${eventId}`);
-  revalidatePath(`/events/${eventId}`);
+  revalidateReturn(eventId);
   return { ok: true };
 }
 
@@ -962,33 +977,5 @@ export async function manualUnreturnUnit(
   eventId: string,
   eventEquipmentId: string
 ): Promise<ScanResult> {
-  const user = await getCurrentAuthUser();
-  if (!user) return { ok: false, error: "Não autenticado" };
-
-  const supabase = createSupabaseAdminClient();
-  const { data: ee, error: eeErr } = await getEeById(supabase, eventId, eventEquipmentId);
-  if (eeErr) return { ok: false, error: eeErr.message };
-  if (!ee) return { ok: false, error: "Equipamento não encontrado na OS" };
-
-  const { data: row } = await supabase
-    .from("event_equipment_units")
-    .select("id")
-    .eq("event_equipment_id", ee.id)
-    .not("returned_at", "is", null)
-    .order("returned_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (!row) return { ok: false, error: "Nada para desbipar." };
-
-  const { error: updErr } = await supabase
-    .from("event_equipment_units")
-    .update({ returned_at: null, returned_by: null })
-    .eq("id", row.id);
-  if (updErr) return { ok: false, error: updErr.message };
-
-  await syncReturnedState(supabase, ee.id, ee.qty);
-
-  revalidatePath(`/scan/return/${eventId}`);
-  revalidatePath(`/events/${eventId}`);
-  return { ok: true, equipmentId: ee.equipment_id, eventEquipmentId: ee.id };
+  return unreturnSerializedMaterial(eventId, eventEquipmentId, null);
 }

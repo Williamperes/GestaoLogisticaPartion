@@ -887,102 +887,88 @@ describe("devolução manual de material em lote", () => {
   });
 });
 
-describe("finalizeReturn — materiais carregados pendentes", () => {
+describe("finalizeReturn — autorização e conclusão atômica", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.getCurrentAuthUser.mockResolvedValue({ id: "user-1" });
+    mocks.rpc.mockReset();
+    mocks.getCurrentUserContext.mockResolvedValue({
+      ...WAREHOUSE_CONTEXT,
+      role: "admin",
+    });
+    mocks.getTeamMemberByUserId.mockResolvedValue({ id: "member-1" });
+    mocks.teamMemberHasEventAccess.mockResolvedValue(true);
+    mocks.createSupabaseServerClient.mockResolvedValue({ rpc: mocks.rpc });
   });
 
-  it("recusa concluir enquanto um lote carregado ainda não voltou", async () => {
-    const supabase = fakeSupabase({
-      events: [() => chain({ data: { status: "in_field" }, error: null })],
-      event_equipment: [
-        () =>
-          chain({
-            data: [
-              {
-                equipment: { type: "bulk" },
-                bulk_loaded_qty: 5,
-                bulk_returned_qty: 4,
-                event_equipment_units: [],
-              },
-            ],
-            error: null,
-          }),
-      ],
-    });
-    mocks.createSupabaseAdminClient.mockReturnValue(supabase);
+  it("rejeita usuário não autenticado antes de qualquer cliente privilegiado", async () => {
+    mocks.getCurrentUserContext.mockResolvedValue(null);
 
     await expect(finalizeReturn("evt-1")).resolves.toEqual({
       ok: false,
-      error: "Ainda há equipamentos carregados pendentes de devolução.",
+      error: "Não autenticado",
     });
-    expect(supabase._calls().events).toBe(1);
+    expect(mocks.createSupabaseAdminClient).not.toHaveBeenCalled();
+    expect(mocks.createSupabaseServerClient).not.toHaveBeenCalled();
   });
 
-  it("recusa concluir enquanto uma unidade serializada carregada não voltou", async () => {
-    const supabase = fakeSupabase({
-      events: [() => chain({ data: { status: "in_field" }, error: null })],
-      event_equipment: [
-        () =>
-          chain({
-            data: [
-              {
-                equipment: { type: "serialized" },
-                bulk_loaded_qty: 0,
-                bulk_returned_qty: 0,
-                event_equipment_units: [{ loaded_at: "2026-08-20T10:00:00Z", returned_at: null }],
-              },
-            ],
-            error: null,
-          }),
-      ],
+  it("rejeita papel sem permissão", async () => {
+    mocks.getCurrentUserContext.mockResolvedValue({
+      ...WAREHOUSE_CONTEXT,
+      role: "employee",
     });
-    mocks.createSupabaseAdminClient.mockReturnValue(supabase);
 
     await expect(finalizeReturn("evt-1")).resolves.toEqual({
       ok: false,
-      error: "Ainda há equipamentos carregados pendentes de devolução.",
+      error: "Sem acesso a esta OS.",
     });
-    expect(supabase._calls().events).toBe(1);
+    expect(mocks.rpc).not.toHaveBeenCalled();
   });
 
-  it("conclui quando lotes e unidades serializadas carregadas já voltaram", async () => {
-    const supabase = fakeSupabase({
-      events: [
-        () => chain({ data: { status: "in_field" }, error: null }),
-        () => chain({ error: null }),
-      ],
-      event_equipment: [
-        () =>
-          chain({
-            data: [
-              {
-                equipment: { type: "bulk" },
-                bulk_loaded_qty: 5,
-                bulk_returned_qty: 5,
-                event_equipment_units: [],
-              },
-              {
-                equipment: { type: "serialized" },
-                bulk_loaded_qty: 0,
-                bulk_returned_qty: 0,
-                event_equipment_units: [
-                  {
-                    loaded_at: "2026-08-20T10:00:00Z",
-                    returned_at: "2026-08-20T18:00:00Z",
-                  },
-                ],
-              },
-            ],
-            error: null,
-          }),
-      ],
+  it("rejeita warehouse sem vínculo com a OS", async () => {
+    mocks.getCurrentUserContext.mockResolvedValue(WAREHOUSE_CONTEXT);
+    mocks.teamMemberHasEventAccess.mockResolvedValue(false);
+
+    await expect(finalizeReturn("evt-1")).resolves.toEqual({
+      ok: false,
+      error: "Sem acesso a esta OS.",
     });
-    mocks.createSupabaseAdminClient.mockReturnValue(supabase);
+    expect(mocks.rpc).not.toHaveBeenCalled();
+  });
+
+  it("delega a decisão e a conclusão à RPC transacional sem usar admin client", async () => {
+    mocks.rpc.mockResolvedValue({ data: true, error: null });
 
     await expect(finalizeReturn("evt-1")).resolves.toEqual({ ok: true });
-    expect(supabase._calls().events).toBe(2);
+    expect(mocks.rpc).toHaveBeenCalledOnce();
+    expect(mocks.rpc).toHaveBeenCalledWith("finalize_event_return", {
+      p_event_id: "evt-1",
+    });
+    expect(mocks.createSupabaseAdminClient).not.toHaveBeenCalled();
+    expect(mocks.revalidatePath.mock.calls).toEqual([
+      ["/scan/return/evt-1"],
+      ["/events/evt-1"],
+    ]);
+  });
+
+  it("não permite conclusão cross-tenant quando a RPC rejeita a organização", async () => {
+    mocks.rpc.mockResolvedValue({ data: null, error: { message: "EXTRA_FORBIDDEN" } });
+
+    await expect(finalizeReturn("evt-1")).resolves.toEqual({
+      ok: false,
+      error: "Sem acesso a esta OS.",
+    });
+  });
+
+  it("traduz pendência detectada atomicamente pela RPC", async () => {
+    mocks.rpc.mockResolvedValue({
+      data: null,
+      error: { message: "EXTRA_RETURN_PENDING" },
+    });
+
+    await expect(finalizeReturn("evt-1")).resolves.toEqual({
+      ok: false,
+      error: "Ainda há equipamentos carregados pendentes de devolução.",
+    });
   });
 });
 
@@ -1227,43 +1213,48 @@ describe("unscanLoadUnit", () => {
 describe("unscanReturnUnit", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.getCurrentAuthUser.mockResolvedValue({ id: "user-1" });
+    mocks.rpc.mockReset();
+    mocks.getCurrentUserContext.mockResolvedValue({
+      ...WAREHOUSE_CONTEXT,
+      role: "admin",
+    });
+    mocks.createSupabaseServerClient.mockResolvedValue({ rpc: mocks.rpc });
   });
 
-  it("happy path: zera returned_at e ressincroniza", async () => {
+  it("desfaz por QR somente dentro da RPC protegida", async () => {
     mocks.getEquipmentUnitByQrCode.mockResolvedValue(VALID_UNIT);
-    const supabase = fakeSupabase({
-      event_equipment: [() => chain({ data: EE_ROW, error: null }), () => chain({ error: null })],
-      event_equipment_units: [
-        () => chain({ data: { id: "eeu-1" }, error: null }), // update ... select
-        () => chain({ count: 0, error: null }), // sync count
-      ],
+    mocks.rpc.mockResolvedValue({
+      data: {
+        event_equipment_id: "ee-1",
+        equipment_id: "eq-A",
+        equipment_unit_id: "unit-1",
+        returned_units_count: 0,
+      },
+      error: null,
     });
-    mocks.createSupabaseAdminClient.mockReturnValue(supabase);
 
     const result = await unscanReturnUnit("evt-1", "QR-OK");
-    expect(result.ok).toBe(true);
-    expect(result.eventEquipmentId).toBe("ee-1");
-  });
-
-  it("rejeita quando a unidade não estava retornada", async () => {
-    mocks.getEquipmentUnitByQrCode.mockResolvedValue(VALID_UNIT);
-    const supabase = fakeSupabase({
-      event_equipment: [() => chain({ data: EE_ROW, error: null })],
-      event_equipment_units: [() => chain({ data: null, error: null })],
+    expect(result).toEqual({
+      ok: true,
+      unitId: "unit-1",
+      equipmentId: "eq-A",
+      eventEquipmentId: "ee-1",
+      returnedUnitsCount: 0,
     });
-    mocks.createSupabaseAdminClient.mockReturnValue(supabase);
-
-    const result = await unscanReturnUnit("evt-1", "QR-OK");
-    expect(result.ok).toBe(false);
-    expect(result.error).toMatch(/não estava retornada/i);
+    expect(mocks.rpc).toHaveBeenCalledWith("unreturn_serialized_material", {
+      p_event_id: "evt-1",
+      p_event_equipment_id: null,
+      p_equipment_unit_id: "unit-1",
+    });
+    expect(mocks.createSupabaseAdminClient).not.toHaveBeenCalled();
   });
 
   it("rejeita sem autenticação", async () => {
-    mocks.getCurrentAuthUser.mockResolvedValue(null);
+    mocks.getCurrentUserContext.mockResolvedValue(null);
     const result = await unscanReturnUnit("evt-1", "QR");
     expect(result.ok).toBe(false);
     expect(result.error).toMatch(/autentic/i);
+    expect(mocks.getEquipmentUnitByQrCode).not.toHaveBeenCalled();
   });
 
   it("rejeita QR vazio", async () => {
@@ -1279,41 +1270,14 @@ describe("unscanReturnUnit", () => {
     expect(result.error).toMatch(/não encontrado/i);
   });
 
-  it("propaga erro do banco ao buscar a linha event_equipment", async () => {
+  it("recusa desfazer depois de completed conforme estado validado na RPC", async () => {
     mocks.getEquipmentUnitByQrCode.mockResolvedValue(VALID_UNIT);
-    mocks.createSupabaseAdminClient.mockReturnValue(
-      fakeSupabase({
-        event_equipment: [() => chain({ data: null, error: { message: "ee boom" } })],
-      })
-    );
-    const result = await unscanReturnUnit("evt-1", "QR");
-    expect(result.ok).toBe(false);
-    expect(result.error).toBe("ee boom");
-  });
+    mocks.rpc.mockResolvedValue({ data: null, error: { message: "EXTRA_EVENT_STATE" } });
 
-  it("rejeita QR não vinculado à OS", async () => {
-    mocks.getEquipmentUnitByQrCode.mockResolvedValue(VALID_UNIT);
-    mocks.createSupabaseAdminClient.mockReturnValue(
-      fakeSupabase({
-        event_equipment: [() => chain({ data: null, error: null })],
-      })
-    );
-    const result = await unscanReturnUnit("evt-1", "QR");
-    expect(result.ok).toBe(false);
-    expect(result.error).toMatch(/não está/i);
-  });
-
-  it("propaga erro do banco no update", async () => {
-    mocks.getEquipmentUnitByQrCode.mockResolvedValue(VALID_UNIT);
-    mocks.createSupabaseAdminClient.mockReturnValue(
-      fakeSupabase({
-        event_equipment: [() => chain({ data: EE_ROW, error: null })],
-        event_equipment_units: [() => chain({ data: null, error: { message: "upd boom" } })],
-      })
-    );
-    const result = await unscanReturnUnit("evt-1", "QR");
-    expect(result.ok).toBe(false);
-    expect(result.error).toBe("upd boom");
+    await expect(unscanReturnUnit("evt-1", "QR")).resolves.toEqual({
+      ok: false,
+      error: "Esta OS não permite alterar devoluções.",
+    });
   });
 });
 
@@ -1524,7 +1488,13 @@ describe("manualUnloadUnit", () => {
 describe("manualReturnUnit / manualUnreturnUnit", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.rpc.mockReset();
     mocks.getCurrentAuthUser.mockResolvedValue({ id: "user-1" });
+    mocks.getCurrentUserContext.mockResolvedValue({
+      ...WAREHOUSE_CONTEXT,
+      role: "admin",
+    });
+    mocks.createSupabaseServerClient.mockResolvedValue({ rpc: mocks.rpc });
   });
 
   it("manualReturnUnit happy path: retorna uma unidade carregada", async () => {
@@ -1558,18 +1528,30 @@ describe("manualReturnUnit / manualUnreturnUnit", () => {
   });
 
   it("manualUnreturnUnit happy path: desfaz um retorno", async () => {
-    const supabase = fakeSupabase({
-      event_equipment: [() => chain({ data: EE_ROW, error: null }), () => chain({ error: null })],
-      event_equipment_units: [
-        () => chain({ data: { id: "eeu-1" }, error: null }), // acha retornada
-        () => chain({ error: null }), // update returned_at=null
-        () => chain({ count: 0, error: null }), // sync count
-      ],
+    mocks.rpc.mockResolvedValue({
+      data: {
+        event_equipment_id: "ee-1",
+        equipment_id: "eq-A",
+        equipment_unit_id: "unit-1",
+        returned_units_count: 0,
+      },
+      error: null,
     });
-    mocks.createSupabaseAdminClient.mockReturnValue(supabase);
 
     const result = await manualUnreturnUnit("evt-1", "ee-1");
-    expect(result.ok).toBe(true);
+    expect(result).toEqual({
+      ok: true,
+      unitId: "unit-1",
+      equipmentId: "eq-A",
+      eventEquipmentId: "ee-1",
+      returnedUnitsCount: 0,
+    });
+    expect(mocks.rpc).toHaveBeenCalledWith("unreturn_serialized_material", {
+      p_event_id: "evt-1",
+      p_event_equipment_id: "ee-1",
+      p_equipment_unit_id: null,
+    });
+    expect(mocks.createSupabaseAdminClient).not.toHaveBeenCalled();
   });
 
   it("manualReturnUnit rejeita quando não há unidade carregada", async () => {
@@ -1629,58 +1611,18 @@ describe("manualReturnUnit / manualUnreturnUnit", () => {
   });
 
   it("manualUnreturnUnit rejeita sem autenticação", async () => {
-    mocks.getCurrentAuthUser.mockResolvedValue(null);
+    mocks.getCurrentUserContext.mockResolvedValue(null);
     const result = await manualUnreturnUnit("evt-1", "ee-1");
     expect(result.ok).toBe(false);
     expect(result.error).toMatch(/autentic/i);
   });
 
-  it("manualUnreturnUnit propaga erro do banco ao buscar a linha", async () => {
-    mocks.createSupabaseAdminClient.mockReturnValue(
-      fakeSupabase({
-        event_equipment: [() => chain({ data: null, error: { message: "ee boom" } })],
-      })
-    );
-    const result = await manualUnreturnUnit("evt-1", "ee-1");
-    expect(result.ok).toBe(false);
-    expect(result.error).toBe("ee boom");
-  });
+  it("manualUnreturnUnit recusa OS completed pela barreira transacional", async () => {
+    mocks.rpc.mockResolvedValue({ data: null, error: { message: "EXTRA_EVENT_STATE" } });
 
-  it("manualUnreturnUnit rejeita quando o equipamento não está na OS", async () => {
-    mocks.createSupabaseAdminClient.mockReturnValue(
-      fakeSupabase({
-        event_equipment: [() => chain({ data: null, error: null })],
-      })
-    );
-    const result = await manualUnreturnUnit("evt-1", "ee-1");
-    expect(result.ok).toBe(false);
-    expect(result.error).toMatch(/não encontrado/i);
-  });
-
-  it("manualUnreturnUnit rejeita quando não há nada para desbipar", async () => {
-    mocks.createSupabaseAdminClient.mockReturnValue(
-      fakeSupabase({
-        event_equipment: [() => chain({ data: EE_ROW, error: null })],
-        event_equipment_units: [() => chain({ data: null, error: null })],
-      })
-    );
-    const result = await manualUnreturnUnit("evt-1", "ee-1");
-    expect(result.ok).toBe(false);
-    expect(result.error).toMatch(/nada para desbipar/i);
-  });
-
-  it("manualUnreturnUnit propaga erro do banco no update", async () => {
-    mocks.createSupabaseAdminClient.mockReturnValue(
-      fakeSupabase({
-        event_equipment: [() => chain({ data: EE_ROW, error: null })],
-        event_equipment_units: [
-          () => chain({ data: { id: "eeu-1" }, error: null }),
-          () => chain({ error: { message: "upd boom" } }),
-        ],
-      })
-    );
-    const result = await manualUnreturnUnit("evt-1", "ee-1");
-    expect(result.ok).toBe(false);
-    expect(result.error).toBe("upd boom");
+    await expect(manualUnreturnUnit("evt-1", "ee-1")).resolves.toEqual({
+      ok: false,
+      error: "Esta OS não permite alterar devoluções.",
+    });
   });
 });

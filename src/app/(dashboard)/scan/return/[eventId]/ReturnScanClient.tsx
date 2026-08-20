@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, Check, Flag, Minus, Plus } from "lucide-react";
 import { toast } from "sonner";
@@ -35,21 +35,64 @@ interface ReturnScanClientProps {
   eventId: string;
   eventStatus: EventStatus;
   initialItems: Item[];
+  canReturnBulk?: boolean;
+  canFinalizeReturn?: boolean;
 }
 
 type Mode = "return" | "defect" | "unreturn";
 
 type DefectTarget = { kind: "scan"; qrCode: string } | { kind: "manual"; item: Item };
 
-export function ReturnScanClient({ eventId, eventStatus, initialItems }: ReturnScanClientProps) {
+export function ReturnScanClient({
+  eventId,
+  eventStatus,
+  initialItems,
+  canReturnBulk = true,
+  canFinalizeReturn = true,
+}: ReturnScanClientProps) {
   const router = useRouter();
   const [items, setItems] = useState(initialItems);
+  const canonicalRef = useRef({ eventId, items: initialItems });
   const [mode, setMode] = useState<Mode>("return");
   const [busy, setBusy] = useState(false);
   const [finalizing, setFinalizing] = useState(false);
   const [defectTarget, setDefectTarget] = useState<DefectTarget | null>(null);
   const [defectCondition, setDefectCondition] = useState<DefectCondition>("damaged");
   const [defectNote, setDefectNote] = useState("");
+  const completed = eventStatus === "completed";
+
+  useEffect(() => {
+    const previousCanonical = canonicalRef.current;
+    canonicalRef.current = { eventId, items: initialItems };
+
+    if (previousCanonical.eventId !== eventId) {
+      setItems(initialItems);
+      setDefectTarget(null);
+      setMode("return");
+      return;
+    }
+
+    const previousById = new Map(previousCanonical.items.map((item) => [item.id, item]));
+    setItems((currentItems) => {
+      const currentById = new Map(currentItems.map((item) => [item.id, item]));
+      return initialItems.map((canonical) => {
+        const previous = previousById.get(canonical.id);
+        const current = currentById.get(canonical.id);
+        const preserveLocal =
+          previous && current && previous.returnedUnitsCount === canonical.returnedUnitsCount;
+        const returnedUnitsCount = preserveLocal
+          ? current.returnedUnitsCount
+          : canonical.returnedUnitsCount;
+        return {
+          ...canonical,
+          returnedUnitsCount: Math.min(
+            canonical.loadedUnitsCount,
+            Math.max(0, returnedUnitsCount)
+          ),
+        };
+      });
+    });
+  }, [eventId, initialItems]);
 
   const { pending, done } = useMemo(() => {
     const pending: Item[] = [];
@@ -94,6 +137,7 @@ export function ReturnScanClient({ eventId, eventStatus, initialItems }: ReturnS
   }
 
   async function handleScan(text: string) {
+    if (completed) return;
     if (mode === "defect") {
       setDefectTarget({ kind: "scan", qrCode: text });
       return;
@@ -113,7 +157,7 @@ export function ReturnScanClient({ eventId, eventStatus, initialItems }: ReturnS
   }
 
   async function submitDefect() {
-    if (!defectTarget || busy) return;
+    if (completed || !defectTarget || busy) return;
     setBusy(true);
     try {
       const result =
@@ -137,7 +181,7 @@ export function ReturnScanClient({ eventId, eventStatus, initialItems }: ReturnS
   }
 
   async function handleManual(item: Item, delta: 1 | -1) {
-    if (busy) return;
+    if (completed || busy || (item.equipmentType === "bulk" && !canReturnBulk)) return;
     setBusy(true);
     try {
       const result =
@@ -165,7 +209,7 @@ export function ReturnScanClient({ eventId, eventStatus, initialItems }: ReturnS
   }
 
   async function handleFinalize() {
-    if (finalizing) return;
+    if (!canFinalizeReturn || finalizing) return;
     setFinalizing(true);
     try {
       const result = await finalizeReturn(eventId);
@@ -181,6 +225,14 @@ export function ReturnScanClient({ eventId, eventStatus, initialItems }: ReturnS
   }
 
   function Counter({ item }: { item: Item }) {
+    if (completed || (item.equipmentType === "bulk" && !canReturnBulk)) {
+      return (
+        <span className="min-w-[2.75rem] text-center text-xs tabular-nums text-muted-foreground">
+          {item.returnedUnitsCount}/{item.loadedUnitsCount}
+        </span>
+      );
+    }
+
     return (
       <div className="flex shrink-0 items-center gap-1.5">
         <button
@@ -210,54 +262,58 @@ export function ReturnScanClient({ eventId, eventStatus, initialItems }: ReturnS
 
   return (
     <>
-      <div className="mb-3 grid grid-cols-3 gap-1 rounded-xl border border-border bg-card p-1">
-        <button
-          type="button"
-          onClick={() => setMode("return")}
-          className={`rounded-lg py-1.5 text-xs font-semibold transition ${
-            mode === "return" ? "bg-emerald-500/15 text-emerald-700" : "text-muted-foreground"
-          }`}
-        >
-          Bipar
-        </button>
-        <button
-          type="button"
-          onClick={() => setMode("defect")}
-          className={`rounded-lg py-1.5 text-xs font-semibold transition ${
-            mode === "defect" ? "bg-amber-500/15 text-amber-700" : "text-muted-foreground"
-          }`}
-        >
-          Defeito
-        </button>
-        <button
-          type="button"
-          onClick={() => setMode("unreturn")}
-          className={`rounded-lg py-1.5 text-xs font-semibold transition ${
-            mode === "unreturn" ? "bg-red-500/15 text-red-700" : "text-muted-foreground"
-          }`}
-        >
-          Desbipar
-        </button>
-      </div>
+      {!completed && (
+        <>
+          <div className="mb-3 grid grid-cols-3 gap-1 rounded-xl border border-border bg-card p-1">
+            <button
+              type="button"
+              onClick={() => setMode("return")}
+              className={`rounded-lg py-1.5 text-xs font-semibold transition ${
+                mode === "return" ? "bg-emerald-500/15 text-emerald-700" : "text-muted-foreground"
+              }`}
+            >
+              Bipar
+            </button>
+            <button
+              type="button"
+              onClick={() => setMode("defect")}
+              className={`rounded-lg py-1.5 text-xs font-semibold transition ${
+                mode === "defect" ? "bg-amber-500/15 text-amber-700" : "text-muted-foreground"
+              }`}
+            >
+              Defeito
+            </button>
+            <button
+              type="button"
+              onClick={() => setMode("unreturn")}
+              className={`rounded-lg py-1.5 text-xs font-semibold transition ${
+                mode === "unreturn" ? "bg-red-500/15 text-red-700" : "text-muted-foreground"
+              }`}
+            >
+              Desbipar
+            </button>
+          </div>
 
-      {mode === "defect" && (
-        <p className="mb-2 rounded-lg bg-amber-500/10 px-3 py-2 text-[11px] font-medium text-amber-700">
-          Bipe a unidade com defeito — você escolhe danificado ou perdido em seguida. O item sai de
-          circulação e vai para a fila de manutenção.
-        </p>
+          {mode === "defect" && (
+            <p className="mb-2 rounded-lg bg-amber-500/10 px-3 py-2 text-[11px] font-medium text-amber-700">
+              Bipe a unidade com defeito — você escolhe danificado ou perdido em seguida. O item sai de
+              circulação e vai para a fila de manutenção.
+            </p>
+          )}
+
+          <div
+            className={
+              mode === "unreturn"
+                ? "rounded-2xl ring-2 ring-red-500/40 ring-offset-2 ring-offset-background"
+                : mode === "defect"
+                ? "rounded-2xl ring-2 ring-amber-500/40 ring-offset-2 ring-offset-background"
+                : ""
+            }
+          >
+            <QrScanner onResult={handleScan} onError={(e) => toast.error(e.message)} />
+          </div>
+        </>
       )}
-
-      <div
-        className={
-          mode === "unreturn"
-            ? "rounded-2xl ring-2 ring-red-500/40 ring-offset-2 ring-offset-background"
-            : mode === "defect"
-            ? "rounded-2xl ring-2 ring-amber-500/40 ring-offset-2 ring-offset-background"
-            : ""
-        }
-      >
-        <QrScanner onResult={handleScan} onError={(e) => toast.error(e.message)} />
-      </div>
 
       <div className="mt-3 flex items-center justify-between rounded-xl border border-border bg-card px-3 py-2 text-xs">
         <span className="font-medium">Progresso</span>
@@ -282,7 +338,7 @@ export function ReturnScanClient({ eventId, eventStatus, initialItems }: ReturnS
                   {item.variantLabel ? ` · ${item.variantLabel}` : ""}
                 </span>
                 <div className="flex shrink-0 items-center gap-1.5">
-                  {item.equipmentType === "serialized" && (
+                  {!completed && item.equipmentType === "serialized" && (
                     <button
                       type="button"
                       onClick={() => setDefectTarget({ kind: "manual", item })}
@@ -331,7 +387,7 @@ export function ReturnScanClient({ eventId, eventStatus, initialItems }: ReturnS
           <p className="text-sm font-medium text-emerald-700">Tudo retornado.</p>
           {eventStatus === "completed" ? (
             <p className="text-xs font-medium text-muted-foreground">OS concluída ✓</p>
-          ) : (
+          ) : canFinalizeReturn ? (
             <button
               type="button"
               onClick={handleFinalize}
@@ -345,7 +401,7 @@ export function ReturnScanClient({ eventId, eventStatus, initialItems }: ReturnS
                 ? "Finalizar OS — Concluída"
                 : "Feche a carga (Em campo) primeiro"}
             </button>
-          )}
+          ) : null}
         </div>
       )}
 
@@ -355,7 +411,7 @@ export function ReturnScanClient({ eventId, eventStatus, initialItems }: ReturnS
         </p>
       )}
 
-      {defectTarget && (
+      {!completed && defectTarget && (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 sm:items-center">
           <div className="w-full max-w-sm rounded-2xl border border-border bg-card p-4 shadow-xl">
             <div className="mb-3 flex items-center gap-2">

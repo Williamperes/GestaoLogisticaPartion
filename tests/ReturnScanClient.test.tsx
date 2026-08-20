@@ -119,6 +119,62 @@ describe("ReturnScanClient — render default", () => {
     render(<ReturnScanClient eventId="ev1" eventStatus="in_field" initialItems={[]} />);
     expect(screen.getByText("Nenhum equipamento carregado nesta OS.")).toBeInTheDocument();
   });
+
+  it("reconcilia props canônicas, concorrência e troca de OS sem perder estado local válido", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <ReturnScanClient eventId="ev1" eventStatus="in_field" initialItems={items} />
+    );
+
+    await user.click(screen.getAllByRole("button", { name: "Bipar 1" })[0]);
+    await waitFor(() => expect(screen.getByText("4/5 unidades")).toBeInTheDocument());
+
+    rerender(
+      <ReturnScanClient
+        eventId="ev1"
+        eventStatus="in_field"
+        initialItems={items.map((item) => ({ ...item }))}
+      />
+    );
+    expect(screen.getByText("4/5 unidades")).toBeInTheDocument();
+
+    const canonicalUpdate = [
+      { ...items[0], loadedUnitsCount: 4, returnedUnitsCount: 1 },
+      { ...items[1], returnedUnitsCount: 1 },
+      {
+        id: "e3",
+        equipmentName: "Cabo extra",
+        variantLabel: null,
+        equipmentType: "bulk" as const,
+        loadedUnitsCount: 2,
+        returnedUnitsCount: 0,
+      },
+    ];
+    rerender(
+      <ReturnScanClient eventId="ev1" eventStatus="in_field" initialItems={canonicalUpdate} />
+    );
+    expect(screen.getByText("3/8 unidades")).toBeInTheDocument();
+    expect(screen.getByText("Cabo extra")).toBeInTheDocument();
+
+    rerender(
+      <ReturnScanClient
+        eventId="ev2"
+        eventStatus="in_field"
+        initialItems={[
+          {
+            id: "other",
+            equipmentName: "Outra OS",
+            variantLabel: null,
+            equipmentType: "serialized",
+            loadedUnitsCount: 1,
+            returnedUnitsCount: 0,
+          },
+        ]}
+      />
+    );
+    expect(screen.getByText("0/1 unidades")).toBeInTheDocument();
+    expect(screen.queryByText("Cabo extra")).not.toBeInTheDocument();
+  });
 });
 
 describe("ReturnScanClient — scan", () => {
@@ -289,6 +345,30 @@ describe("ReturnScanClient — manual counter", () => {
 
     expect(screen.queryByRole("button", { name: "Marcar defeito" })).not.toBeInTheDocument();
   });
+
+  it("mostra lote sem controles para papel não autorizado", () => {
+    render(
+      <ReturnScanClient
+        eventId="event-1"
+        eventStatus="in_field"
+        canReturnBulk={false}
+        initialItems={[
+          {
+            id: "ee-bulk",
+            equipmentName: "Cabo XLR",
+            variantLabel: null,
+            equipmentType: "bulk",
+            loadedUnitsCount: 5,
+            returnedUnitsCount: 2,
+          },
+        ]}
+      />
+    );
+
+    expect(screen.getByText("2/5")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Bipar 1" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Desbipar 1" })).not.toBeInTheDocument();
+  });
 });
 
 describe("ReturnScanClient — modo e erro de scanner", () => {
@@ -359,6 +439,21 @@ describe("ReturnScanClient — finalizar OS", () => {
   it("completed: indica OS concluída, sem botão", () => {
     render(<ReturnScanClient eventId="ev1" eventStatus="completed" initialItems={allReturned} />);
     expect(screen.getByText("OS concluída ✓")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Finalizar OS/ })).not.toBeInTheDocument();
+    expect(screen.queryByTestId("fake-scan")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Bipar 1" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Desbipar 1" })).not.toBeInTheDocument();
+  });
+
+  it("não oferece finalização para papel sem permissão", () => {
+    render(
+      <ReturnScanClient
+        eventId="ev1"
+        eventStatus="in_field"
+        initialItems={allReturned}
+        canFinalizeReturn={false}
+      />
+    );
     expect(screen.queryByRole("button", { name: /Finalizar OS/ })).not.toBeInTheDocument();
   });
 

@@ -135,4 +135,70 @@ describe("migration 026 — material extra", () => {
       /select ee_id, p_equipment_id, p_variant_id,[\s\S]*p_qty,[\s\S]*log_id,[\s\S]*log_created_at,[\s\S]*log_added_by/
     );
   });
+
+  it("autoriza retorno por organização e exige vínculo de warehouse", () => {
+    const helper = functionDefinition("assert_event_return_access");
+
+    expect(helper).toMatch(/security definer/);
+    expect(helper).toMatch(/set search_path = public, pg_temp/);
+    expect(helper).toMatch(
+      /has_org_role\(org_id, array\[[\s\S]*'super_admin'[\s\S]*'admin'[\s\S]*'operations'[\s\S]*'warehouse'/
+    );
+    expect(helper).toMatch(
+      /organization_members[\s\S]*organization_id = org_id[\s\S]*caller_role = 'warehouse'/
+    );
+    expect(helper).toMatch(/event_date_team_members/);
+    expect(helper).toMatch(/ready_to_load[\s\S]*in_field/);
+    expect(helper).toMatch(/for update/);
+    expect(helper).toMatch(
+      /revoke execute on function public\.assert_event_return_access\(uuid\) from public;/
+    );
+    expect(helper).not.toMatch(/grant execute/);
+  });
+
+  it("finaliza retorno atomicamente sob locks e somente de in_field", () => {
+    const finalize = functionDefinition("finalize_event_return");
+
+    expect(finalize).toMatch(/security definer/);
+    expect(finalize).toMatch(/set search_path = public, pg_temp/);
+    expect(finalize).toMatch(/perform public\.assert_event_return_access\(p_event_id\)/);
+    expect(finalize).toMatch(/order by ee\.id[\s\S]*for update of ee/);
+    expect(finalize).toMatch(/order by eeu\.id[\s\S]*for update of eeu/);
+    expect(finalize).toMatch(/bulk_returned_qty < ee\.bulk_loaded_qty/);
+    expect(finalize).toMatch(/eeu\.loaded_at is not null[\s\S]*eeu\.returned_at is null/);
+    expect(finalize).toMatch(
+      /update public\.events[\s\S]*set status = 'completed'[\s\S]*where id = p_event_id[\s\S]*and status = 'in_field'/
+    );
+    expect(finalize).toMatch(/raise exception 'EXTRA_RETURN_PENDING'/);
+    expect(finalize).toMatch(
+      /revoke execute on function public\.finalize_event_return\(uuid\) from public;/
+    );
+    expect(finalize).toMatch(
+      /grant execute on function public\.finalize_event_return\(uuid\) to authenticated;/
+    );
+  });
+
+  it("desfaz retorno serializado dentro da RPC protegida por estado", () => {
+    const unreturn = functionDefinition("unreturn_serialized_material");
+
+    expect(unreturn).toMatch(/perform public\.assert_event_return_access\(p_event_id\)/);
+    expect(unreturn).toMatch(/ee\.event_id = p_event_id/);
+    expect(unreturn).toMatch(/for update of ee/);
+    expect(unreturn).toMatch(/for update of eeu/);
+    expect(unreturn).toMatch(/set returned_at = null,[\s\S]*returned_by = null/);
+    expect(unreturn).toMatch(
+      /revoke execute on function public\.unreturn_serialized_material\(uuid, uuid, uuid\) from public;/
+    );
+    expect(unreturn).toMatch(
+      /grant execute on function public\.unreturn_serialized_material\(uuid, uuid, uuid\) to authenticated;/
+    );
+  });
+
+  it("mantém updates bulk limitados por id e event_id", () => {
+    for (const name of ["return_bulk_material", "unreturn_bulk_material"]) {
+      expect(functionDefinition(name)).toMatch(
+        /update public\.event_equipment ee[\s\S]*where ee\.id = p_event_equipment_id[\s\S]*and ee\.event_id = p_event_id/
+      );
+    }
+  });
 });

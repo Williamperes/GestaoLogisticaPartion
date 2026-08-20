@@ -45,6 +45,7 @@ const hasAccess = vi.mocked(teamMemberHasEventAccess);
 
 const eventFixture = {
   id: "ev-1",
+  organizationId: "org-1",
   name: "Show Sul",
   status: "in_field",
   equipment: [
@@ -64,6 +65,10 @@ describe("ScanReturnPage", () => {
     const { render, screen } = await import("@testing-library/react");
     render(ui);
     expect(screen.getByRole("heading", { name: /Retornar/ })).toHaveTextContent("Show Sul");
+    expect(mocks.returnScanClient).toHaveBeenCalledWith(
+      expect.objectContaining({ canReturnBulk: false, canFinalizeReturn: true }),
+      undefined
+    );
   });
 
   it("chama notFound quando o evento não existe", async () => {
@@ -82,6 +87,26 @@ describe("ScanReturnPage", () => {
     await expect(
       ScanReturnPage({ params: Promise.resolve({ eventId: "ev-1" }) })
     ).rejects.toThrow(/REDIRECT:\/events/);
+  });
+
+  it("warehouse vinculado recebe controles bulk e finalização", async () => {
+    getEvent.mockResolvedValue(eventFixture as never);
+    getCtx.mockResolvedValue({
+      role: "warehouse",
+      userId: "u1",
+      primaryOrganization: { id: "org-1" },
+    } as never);
+    getMember.mockResolvedValue({ id: "m-1" } as never);
+    hasAccess.mockResolvedValue(true);
+
+    const ui = await ScanReturnPage({ params: Promise.resolve({ eventId: "ev-1" }) });
+    const { render } = await import("@testing-library/react");
+    render(ui);
+
+    expect(mocks.returnScanClient).toHaveBeenCalledWith(
+      expect.objectContaining({ canReturnBulk: true, canFinalizeReturn: true }),
+      undefined
+    );
   });
 
   it("propaga o tipo e os contadores agregados de lote para o client", async () => {
