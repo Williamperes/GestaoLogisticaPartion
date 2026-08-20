@@ -341,13 +341,30 @@ describe("getEventById", () => {
           separated: true, separated_at: null, separated_by: null,
           loaded: true, loaded_at: null, loaded_by: null,
           returned_at: null, notes: null,
-          equipment: { id: "eq-1", name: "Mesa" },
+          equipment: { id: "eq-1", name: "Mesa", type: "serialized" },
           equipment_units: { id: "u-1", serial: "S1", status: "in_field" },
           equipment_variants: null,
           event_equipment_units: [
             { id: "x1", loaded_at: "2026-02-01", returned_at: null },
             { id: "x2", loaded_at: "2026-02-01", returned_at: "2026-02-02" },
           ],
+        },
+        {
+          id: "ee2", event_id: "ev-1", equipment_id: "eq-2", unit_id: null, variant_id: null,
+          qty: 5,
+          extra_qty: 2,
+          extra_reason: "Cliente pediu mais dois cabos",
+          extra_added_by: "warehouse-user",
+          extra_added_at: "2026-08-20T18:00:00.000Z",
+          bulk_loaded_qty: 5,
+          bulk_returned_qty: 1,
+          separated: true, separated_at: null, separated_by: null,
+          loaded: true, loaded_at: null, loaded_by: null,
+          returned_at: null, notes: null,
+          equipment: { id: "eq-1", name: "Cabo XLR", type: "bulk" },
+          equipment_units: null,
+          equipment_variants: null,
+          event_equipment_units: [],
         },
       ],
       event_speakers: [
@@ -370,9 +387,21 @@ describe("getEventById", () => {
     expect(ev?.checklistDone).toBe(1);
     expect(ev?.equipment[0]).toMatchObject({
       equipmentName: "Mesa",
+      equipmentType: "serialized",
       unitSerial: "S1",
       unitStatus: "in_field",
       loadedUnitsCount: 2,
+      returnedUnitsCount: 1,
+    });
+    expect(ev?.equipment[1]).toMatchObject({
+      equipmentType: "bulk",
+      extraQty: 2,
+      extraReason: "Cliente pediu mais dois cabos",
+      extraAddedBy: "warehouse-user",
+      extraAddedAt: "2026-08-20T18:00:00.000Z",
+      bulkLoadedQty: 5,
+      bulkReturnedQty: 1,
+      loadedUnitsCount: 5,
       returnedUnitsCount: 1,
     });
   });

@@ -40,6 +40,7 @@ export interface EventEquipmentItem {
   eventId: string;
   equipmentId: string;
   equipmentName: string;
+  equipmentType: "serialized" | "bulk";
   variantId: string | null;
   variantLabel: string | null;
   unitId: string | null;
@@ -55,6 +56,12 @@ export interface EventEquipmentItem {
   returnedAt: string | null;
   loadedUnitsCount: number;
   returnedUnitsCount: number;
+  extraQty: number;
+  extraReason: string | null;
+  extraAddedBy: string | null;
+  extraAddedAt: string | null;
+  bulkLoadedQty: number;
+  bulkReturnedQty: number;
   notes: string | null;
 }
 
@@ -303,10 +310,12 @@ export async function getEventById(id: string): Promise<EventDetail | null> {
       event_checklist_items (id, event_id, label, position, section, required, template_item_id, done, done_at, done_by),
       event_equipment (
         id, event_id, equipment_id, unit_id, variant_id, qty,
+        extra_qty, extra_reason, extra_added_by, extra_added_at,
+        bulk_loaded_qty, bulk_returned_qty,
         separated, separated_at, separated_by,
         loaded, loaded_at, loaded_by,
         returned_at, notes,
-        equipment (id, name),
+        equipment (id, name, type),
         equipment_units (id, serial, status),
         equipment_variants (id, label),
         event_equipment_units (id, loaded_at, returned_at)
@@ -340,11 +349,13 @@ export async function getEventById(id: string): Promise<EventDetail | null> {
       id: string; event_id: string; equipment_id: string; unit_id: string | null;
       variant_id: string | null;
       qty: number;
+      extra_qty: number; extra_reason: string | null; extra_added_by: string | null;
+      extra_added_at: string | null; bulk_loaded_qty: number; bulk_returned_qty: number;
       separated: boolean; separated_at: string | null; separated_by: string | null;
       loaded: boolean; loaded_at: string | null; loaded_by: string | null;
       returned_at: string | null;
       notes: string | null;
-      equipment: { id: string; name: string };
+      equipment: { id: string; name: string; type: "serialized" | "bulk" };
       equipment_units: { id: string; serial: string; status: string } | null;
       equipment_variants: { id: string; label: string } | null;
       event_equipment_units: { id: string; loaded_at: string | null; returned_at: string | null }[] | null;
@@ -415,11 +426,13 @@ export async function getEventById(id: string): Promise<EventDetail | null> {
       })),
     equipment: equipRows.map((e) => {
       const eeUnits = e.event_equipment_units ?? [];
+      const isBulk = e.equipment.type === "bulk";
       return {
         id: e.id,
         eventId: e.event_id,
         equipmentId: e.equipment_id,
         equipmentName: e.equipment.name,
+        equipmentType: e.equipment.type,
         variantId: e.variant_id,
         variantLabel: e.equipment_variants?.label ?? null,
         unitId: e.unit_id,
@@ -433,8 +446,18 @@ export async function getEventById(id: string): Promise<EventDetail | null> {
         loadedAt: e.loaded_at,
         loadedBy: e.loaded_by,
         returnedAt: e.returned_at,
-        loadedUnitsCount: eeUnits.filter((u) => u.loaded_at !== null).length,
-        returnedUnitsCount: eeUnits.filter((u) => u.returned_at !== null).length,
+        loadedUnitsCount: isBulk
+          ? (e.bulk_loaded_qty ?? 0)
+          : eeUnits.filter((u) => u.loaded_at !== null).length,
+        returnedUnitsCount: isBulk
+          ? (e.bulk_returned_qty ?? 0)
+          : eeUnits.filter((u) => u.returned_at !== null).length,
+        extraQty: e.extra_qty ?? 0,
+        extraReason: e.extra_reason ?? null,
+        extraAddedBy: e.extra_added_by ?? null,
+        extraAddedAt: e.extra_added_at ?? null,
+        bulkLoadedQty: e.bulk_loaded_qty ?? 0,
+        bulkReturnedQty: e.bulk_returned_qty ?? 0,
         notes: e.notes,
       };
     }),
