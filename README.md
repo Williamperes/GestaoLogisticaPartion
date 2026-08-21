@@ -20,6 +20,26 @@ You can start editing the page by modifying `app/page.tsx`. The page auto-update
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
+## Material a mais na carga da OS
+
+O fluxo de carga permite que um usuário `warehouse` vinculado à Ordem de Serviço registre material retirado além do planejamento. A aba **Material a mais** só aparece para esse papel, mas a segurança não depende da interface: cada Server Action e cada RPC revalida autenticação, organização, papel e vínculo com a OS.
+
+- A inclusão é aceita apenas quando a OS está em `ready_to_load` ou `in_field`.
+- Material serializado é registrado por QR ou seleção de unidade; material em lote exige uma quantidade inteira positiva.
+- O motivo é obrigatório e normalizado com `trim()`.
+- Cada inclusão atualiza os metadados mais recentes em `event_equipment` e cria um registro imutável em `event_equipment_extra_log`, preservando o histórico de motivos, responsável e horário.
+- O material extra entra carregado imediatamente, reduz a disponibilidade e precisa ser devolvido antes da conclusão da OS.
+- `admin` e os demais papéis não veem a terceira aba e não podem contornar a regra chamando a action diretamente. Um `warehouse` não vinculado também é rejeitado.
+
+### Ordem de implantação
+
+1. Faça backup e confirme explicitamente que o projeto Supabase alvo não é produção.
+2. Aplique as migrations em ordem cronológica; `20260820_000026_event_extra_material.sql` deve vir depois de `20260816_000024_employee_role.sql` e `20260816_000025_employee_events_maintenance_policies.sql`.
+3. Valide colunas e constraints de `event_equipment`, RLS e leitura de `event_equipment_extra_log`, grants das RPCs para `authenticated` e rollback transacional em uma OS descartável.
+4. Só então implante a aplicação compatível e execute a aceitação dos perfis `warehouse` vinculado, `admin` e `warehouse` não vinculado.
+
+Não aplique a migration em produção sem autorização explícita. Os comandos, verificações e a orientação de rollback estão em [`supabase/README.md`](supabase/README.md).
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:
