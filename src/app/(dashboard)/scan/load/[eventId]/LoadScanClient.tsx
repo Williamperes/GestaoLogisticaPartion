@@ -270,7 +270,7 @@ export function LoadScanClient({
                 : "border-amber-500/60 bg-amber-500/10 text-amber-700 hover:bg-amber-500/20 dark:text-amber-300"
             }`}
           >
-            Material a mais
+            Materiais extras
           </button>
         )}
       </div>}

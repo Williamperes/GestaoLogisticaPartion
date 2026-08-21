@@ -196,7 +196,7 @@ describe("LoadScanClient — render default", () => {
     expect(screen.queryByRole("button", { name: "Desbipar 1" })).not.toBeInTheDocument();
   });
 
-  it("mostra Material a mais somente para warehouse e abre o painel real", async () => {
+  it("mostra Materiais extras somente para warehouse e abre o painel real", async () => {
     const user = userEvent.setup();
     const { rerender } = renderClient({
       role: "warehouse",
@@ -204,7 +204,7 @@ describe("LoadScanClient — render default", () => {
       initialExtraLog,
     });
 
-    const extraMaterialButton = screen.getByRole("button", { name: "Material a mais" });
+    const extraMaterialButton = screen.getByRole("button", { name: "Materiais extras" });
 
     expect(extraMaterialButton).toHaveClass("border-amber-500/60", "bg-amber-500/10");
 
@@ -222,7 +222,7 @@ describe("LoadScanClient — render default", () => {
 
     rerender(<LoadScanClient {...defaultProps} role="admin" />);
 
-    expect(screen.queryByRole("button", { name: "Material a mais" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Materiais extras" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Motivo do material extra")).not.toBeInTheDocument();
   });
 
@@ -236,7 +236,7 @@ describe("LoadScanClient — render default", () => {
     await user.click(screen.getAllByRole("button", { name: "Bipar 1" })[0]);
     await waitFor(() => expect(screen.getByText("4/5 unidades")).toBeInTheDocument());
 
-    await user.click(screen.getByRole("button", { name: "Material a mais" }));
+    await user.click(screen.getByRole("button", { name: "Materiais extras" }));
     const repeatedCanonicalSnapshot = items.map((item) => ({ ...item }));
     rerender(
       <LoadScanClient
@@ -251,7 +251,7 @@ describe("LoadScanClient — render default", () => {
 
     expect(screen.getByText("4/5 unidades")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Material a mais" }));
+    await user.click(screen.getByRole("button", { name: "Materiais extras" }));
     const afterExistingExtra = [
       { ...items[0], qty: 4, loadedUnitsCount: 3 },
       items[1],
@@ -270,7 +270,7 @@ describe("LoadScanClient — render default", () => {
     expect(screen.getByText("5/6 unidades")).toBeInTheDocument();
     expect(screen.getByText("Cabo XLR · 10m")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Material a mais" }));
+    await user.click(screen.getByRole("button", { name: "Materiais extras" }));
     const afterNewExtra = [
       ...afterExistingExtra,
       {
