@@ -10,9 +10,23 @@ import {
   listResolvedMaintenanceHistory,
 } from "@/lib/maintenance";
 import { formatDateTimeBR } from "@/lib/dates";
+import type { Equipment } from "@/lib/inventory";
 
 interface InventoryPageProps {
   searchParams: Promise<{ q?: string }>;
+}
+
+function getBulkQuantityLabel(item: Equipment) {
+  const variants = item.variants ?? [];
+  const total = item.hasVariants
+    ? variants.reduce((sum, variant) => sum + (variant.totalQty ?? 0), 0)
+    : (item.bulk?.totalQty ?? 0);
+  const available = item.hasVariants
+    ? variants.reduce((sum, variant) => sum + (variant.availableQty ?? 0), 0)
+    : (item.bulk?.availableQty ?? 0);
+  const unit = item.bulk?.unit ?? "unidades";
+
+  return `${available} de ${total} ${unit} disponíveis`;
 }
 
 export default async function InventoryPage({ searchParams }: InventoryPageProps) {
@@ -38,8 +52,6 @@ export default async function InventoryPage({ searchParams }: InventoryPageProps
     : [[], [], []];
 
   const latestReturnByEquipment = getLatestMaintenanceReturnByEquipment(resolvedMaintenance);
-
-  const filtered = items.filter((i) => i.type === "serialized");
 
   const canWrite = ["super_admin", "admin", "operations", "warehouse"].includes(context?.role ?? "");
 
@@ -87,7 +99,7 @@ export default async function InventoryPage({ searchParams }: InventoryPageProps
       </div>
 
       {/* Grid */}
-      {filtered.length === 0 ? (
+      {items.length === 0 ? (
         <div className="flex flex-col items-center justify-center rounded-xl border border-border bg-card py-16 text-center">
           <Package className="mb-3 h-8 w-8 text-muted-foreground/30" />
           <p className="text-sm font-medium text-muted-foreground">
@@ -103,7 +115,7 @@ export default async function InventoryPage({ searchParams }: InventoryPageProps
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {filtered.map((item) => (
+          {items.map((item) => (
             <Link
               key={item.id}
               href={`/inventory/${item.id}`}
@@ -128,9 +140,15 @@ export default async function InventoryPage({ searchParams }: InventoryPageProps
 
               <div className="mt-3 flex items-center justify-between">
                 <StatusBadge status={item.status} type="item" />
-                <span className="max-w-[90px] truncate font-mono text-[10px] text-muted-foreground">
-                  {item.serial ?? "—"}
-                </span>
+                {item.type === "bulk" ? (
+                  <span className="text-right text-[11px] font-medium text-muted-foreground">
+                    {getBulkQuantityLabel(item)}
+                  </span>
+                ) : (
+                  <span className="max-w-[90px] truncate font-mono text-[10px] text-muted-foreground">
+                    {item.serial ?? item.patrimony ?? "—"}
+                  </span>
+                )}
               </div>
               {latestReturnByEquipment[item.id] && (
                 <p className="mt-3 flex items-center gap-1.5 border-t border-border pt-3 text-[11px] font-medium text-emerald-700">

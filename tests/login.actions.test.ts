@@ -148,22 +148,22 @@ describe("portais de login", () => {
     return signOutMock;
   }
 
-  it("rejeita funcionario no portal interno e encerra a sessao", async () => {
+  it("aceita funcionario no login principal e redireciona para seu destino", async () => {
     const signOutMock = successfulClient("employee-1");
     mocks.getPrimaryAppRoleForUser.mockResolvedValue("employee");
+    mocks.getDefaultAppPathForUser.mockResolvedValue("/events");
 
     await expect(
       signInWithPassword(buildFormData({ email: "employee@example.com", password: "secret123" }))
-    ).rejects.toThrow(
-      `NEXT_REDIRECT:/login?portal=employee&error=${encodeURIComponent("Use o acesso de Funcionarios.")}`
-    );
+    ).rejects.toThrow("NEXT_REDIRECT:/events");
 
-    expect(signOutMock).toHaveBeenCalledOnce();
+    expect(signOutMock).not.toHaveBeenCalled();
   });
 
   it("aceita funcionario no portal de funcionarios", async () => {
     const signOutMock = successfulClient("employee-1");
     mocks.getPrimaryAppRoleForUser.mockResolvedValue("employee");
+    mocks.getDefaultAppPathForUser.mockResolvedValue("/events");
 
     await expect(
       signInEmployeeWithPassword(

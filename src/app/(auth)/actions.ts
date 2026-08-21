@@ -40,14 +40,7 @@ async function signInForPortal(formData: FormData, portal: LoginPortal) {
     );
   }
 
-  if (portal === "internal" && role === "employee") {
-    await supabase.auth.signOut();
-    redirect(
-      `/login?portal=employee&error=${encodeURIComponent("Use o acesso de Funcionarios.")}`
-    );
-  }
-
-  redirect(portal === "employee" ? "/events" : await getDefaultAppPathForUser(data.user.id));
+  redirect(await getDefaultAppPathForUser(data.user.id));
 }
 
 export async function signInWithPassword(formData: FormData) {

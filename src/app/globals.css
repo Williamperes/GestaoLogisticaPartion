@@ -178,6 +178,32 @@
   --sidebar-ring: var(--coral-500);
 }
 
+:root[data-theme="dark"] {
+  --background: #111113;
+  --surface: #19191d;
+  --surface-raised: #222227;
+  --foreground: #f5f5f6;
+  --card: rgba(30, 30, 35, 0.9);
+  --card-foreground: #f5f5f6;
+  --popover: #222227;
+  --popover-foreground: #f5f5f6;
+  --secondary: color-mix(in srgb, var(--indigo-400) 18%, #19191d);
+  --secondary-foreground: #f5f5f6;
+  --muted: #29292f;
+  --muted-foreground: #aaaab2;
+  --accent: color-mix(in srgb, var(--plum-400) 22%, #19191d);
+  --accent-foreground: #f5f5f6;
+  --border: #34343b;
+  --input: #3d3d45;
+  --ring: var(--coral-400);
+  --sidebar: #17171b;
+  --sidebar-foreground: #f5f5f6;
+  --sidebar-accent: #29292f;
+  --sidebar-accent-foreground: #f5f5f6;
+  --sidebar-border: #34343b;
+  color-scheme: dark;
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
@@ -193,6 +219,11 @@
   html {
     @apply font-sans;
     color-scheme: light;
+  }
+  html[data-theme="dark"] body {
+    background-image:
+      radial-gradient(circle at top left, color-mix(in srgb, var(--coral-500) 13%, transparent) 0, transparent 32%),
+      radial-gradient(circle at top right, color-mix(in srgb, var(--indigo-400) 15%, transparent) 0, transparent 36%);
   }
 }
 

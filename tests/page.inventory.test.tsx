@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup } from "@testing-library/react";
 
 afterEach(() => cleanup());
@@ -52,9 +52,31 @@ function equipmentFixture() {
   };
 }
 
+function bulkEquipmentFixture() {
+  return {
+    ...equipmentFixture(),
+    id: "eq-bulk-1",
+    name: "Cabo XLR",
+    type: "bulk" as const,
+    serial: null,
+    bulk: {
+      id: "bulk-1",
+      equipmentId: "eq-bulk-1",
+      variantId: null,
+      unit: "unidades",
+      totalQty: 10,
+      availableQty: 7,
+    },
+  };
+}
+
+const inventory = vi.hoisted(() => ({
+  listEquipment: vi.fn(),
+}));
+
 vi.mock("@/lib/inventory", async (orig) => ({
   ...(await orig<typeof import("@/lib/inventory")>()),
-  listEquipment: vi.fn(async () => [equipmentFixture()]),
+  listEquipment: inventory.listEquipment,
   listEquipmentCategories: vi.fn(async () => []),
 }));
 
@@ -76,6 +98,11 @@ vi.mock("@/app/(dashboard)/inventory/InventorySheet", () => ({
 import InventoryPage from "@/app/(dashboard)/inventory/page";
 
 describe("InventoryPage (RSC)", () => {
+  beforeEach(() => {
+    inventory.listEquipment.mockReset();
+    inventory.listEquipment.mockResolvedValue([equipmentFixture()]);
+  });
+
   it("oferece o download do inventário completo em PDF", async () => {
     const ui = await InventoryPage({ searchParams: Promise.resolve({ q: "mesa" }) });
     const { render, screen } = await import("@testing-library/react");
@@ -93,6 +120,18 @@ describe("InventoryPage (RSC)", () => {
     expect(screen.getByRole("heading", { name: "Inventário" })).toBeInTheDocument();
     expect(screen.getByText("Mesa de Som X32")).toBeInTheDocument();
     expect(screen.getByText("Voltou da manutenção em 17/08/2026 às 12:30")).toBeInTheDocument();
+  });
+
+  it("renderiza item em lote contado no cabecalho com suas quantidades", async () => {
+    inventory.listEquipment.mockResolvedValueOnce([bulkEquipmentFixture()]);
+
+    const ui = await InventoryPage({ searchParams: Promise.resolve({}) });
+    const { render, screen } = await import("@testing-library/react");
+    render(ui);
+
+    expect(screen.getByText("1 item cadastrado")).toBeInTheDocument();
+    expect(screen.getByText("Cabo XLR")).toBeInTheDocument();
+    expect(screen.getByText("7 de 10 unidades disponíveis")).toBeInTheDocument();
   });
 
   it("redireciona para /login quando não há contexto", async () => {

@@ -3,6 +3,7 @@
 import { ChevronRight } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { MobileSidebar } from "@/components/layout/Sidebar";
+import { ThemeToggle } from "@/components/layout/ThemeToggle";
 import type { AppRole } from "@/lib/auth/roles";
 
 const routeLabels: Record<string, string> = {
@@ -53,6 +54,8 @@ export function TopBar({
           </span>
         ))}
       </nav>
+
+      {(role === "admin" || role === "super_admin") && <ThemeToggle />}
     </header>
   );
 }

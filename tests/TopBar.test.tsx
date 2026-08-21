@@ -17,10 +17,11 @@ vi.mock("@/components/layout/Sidebar", () => ({
 }));
 
 import { TopBar } from "@/components/layout/TopBar";
+import type { AppRole } from "@/lib/auth/roles";
 
-function renderAt(path: string) {
+function renderAt(path: string, role: AppRole | null = null) {
   mockPathname = path;
-  return render(<TopBar userName="Yuri" userRole="Admin" role={null} />);
+  return render(<TopBar userName="Yuri" userRole="Admin" role={role} />);
 }
 
 describe("TopBar", () => {
@@ -49,5 +50,15 @@ describe("TopBar", () => {
   it("renderiza o MobileSidebar mockado", () => {
     renderAt("/dashboard");
     expect(screen.getByTestId("mobile-sidebar")).toBeInTheDocument();
+  });
+
+  it.each(["admin", "super_admin"] as const)("mostra o seletor de tema para %s", (role) => {
+    renderAt("/dashboard", role);
+    expect(screen.getByRole("button", { name: /ativar tema/i })).toBeInTheDocument();
+  });
+
+  it("nao mostra o seletor de tema para outros perfis", () => {
+    renderAt("/dashboard", "operations");
+    expect(screen.queryByRole("button", { name: /ativar tema/i })).not.toBeInTheDocument();
   });
 });
