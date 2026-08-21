@@ -35,6 +35,7 @@ interface ReturnScanClientProps {
   eventId: string;
   eventStatus: EventStatus;
   initialItems: Item[];
+  canReturnSerialized?: boolean;
   canReturnBulk?: boolean;
   canFinalizeReturn?: boolean;
 }
@@ -42,17 +43,25 @@ interface ReturnScanClientProps {
 type Mode = "return" | "defect" | "unreturn";
 
 type DefectTarget = { kind: "scan"; qrCode: string } | { kind: "manual"; item: Item };
+type PendingOperation = {
+  id: number;
+  eventId: string;
+  canonicalCounts: Map<string, number>;
+};
 
 export function ReturnScanClient({
   eventId,
   eventStatus,
   initialItems,
+  canReturnSerialized = true,
   canReturnBulk = true,
   canFinalizeReturn = true,
 }: ReturnScanClientProps) {
   const router = useRouter();
   const [items, setItems] = useState(initialItems);
   const canonicalRef = useRef({ eventId, items: initialItems });
+  const operationSequence = useRef(0);
+  const latestAppliedOperation = useRef(new Map<string, number>());
   const [mode, setMode] = useState<Mode>("return");
   const [busy, setBusy] = useState(false);
   const [finalizing, setFinalizing] = useState(false);
@@ -66,6 +75,7 @@ export function ReturnScanClient({
     canonicalRef.current = { eventId, items: initialItems };
 
     if (previousCanonical.eventId !== eventId) {
+      latestAppliedOperation.current.clear();
       setItems(initialItems);
       setDefectTarget(null);
       setMode("return");
@@ -110,17 +120,32 @@ export function ReturnScanClient({
     0
   );
 
-  function applyDelta(eeId: string, delta: number) {
-    setItems((prev) =>
-      prev.map((item) =>
-        item.id === eeId
-          ? { ...item, returnedUnitsCount: Math.max(0, item.returnedUnitsCount + delta) }
-          : item
-      )
-    );
+  function beginOperation(): PendingOperation {
+    const canonical = canonicalRef.current;
+    return {
+      id: ++operationSequence.current,
+      eventId: canonical.eventId,
+      canonicalCounts: new Map(
+        canonical.items.map((item) => [item.id, item.returnedUnitsCount])
+      ),
+    };
   }
 
-  function applyReturnedCount(eeId: string, returnedUnitsCount: number) {
+  function applyReturnedCount(
+    operation: PendingOperation,
+    eeId: string,
+    returnedUnitsCount: number
+  ) {
+    if (operation.eventId !== canonicalRef.current.eventId) return;
+    if ((latestAppliedOperation.current.get(eeId) ?? 0) > operation.id) return;
+    latestAppliedOperation.current.set(eeId, operation.id);
+
+    const canonicalNow = canonicalRef.current.items.find((item) => item.id === eeId);
+    if (
+      !canonicalNow ||
+      canonicalNow.returnedUnitsCount !== operation.canonicalCounts.get(eeId)
+    ) return;
+
     setItems((prev) =>
       prev.map((item) =>
         item.id === eeId
@@ -137,11 +162,12 @@ export function ReturnScanClient({
   }
 
   async function handleScan(text: string) {
-    if (completed) return;
+    if (completed || !canReturnSerialized) return;
     if (mode === "defect") {
       setDefectTarget({ kind: "scan", qrCode: text });
       return;
     }
+    const operation = beginOperation();
     const result =
       mode === "return"
         ? await scanReturnUnit(eventId, text)
@@ -152,12 +178,15 @@ export function ReturnScanClient({
       return;
     }
     scanFeedbackSuccess();
-    if (result.eventEquipmentId) applyDelta(result.eventEquipmentId, mode === "return" ? 1 : -1);
+    if (result.eventEquipmentId && result.returnedUnitsCount !== undefined) {
+      applyReturnedCount(operation, result.eventEquipmentId, result.returnedUnitsCount);
+    }
     toast.success(mode === "return" ? `Retornado: ${text}` : `Removido: ${text}`);
   }
 
   async function submitDefect() {
-    if (completed || !defectTarget || busy) return;
+    if (completed || !canReturnSerialized || !defectTarget || busy) return;
+    const operation = beginOperation();
     setBusy(true);
     try {
       const result =
@@ -170,7 +199,9 @@ export function ReturnScanClient({
         return;
       }
       scanFeedbackSuccess();
-      if (result.eventEquipmentId) applyDelta(result.eventEquipmentId, 1);
+      if (result.eventEquipmentId && result.returnedUnitsCount !== undefined) {
+        applyReturnedCount(operation, result.eventEquipmentId, result.returnedUnitsCount);
+      }
       toast.success(defectCondition === "lost" ? "Marcado como perdido" : "Marcado como danificado");
       setDefectTarget(null);
       setDefectNote("");
@@ -181,7 +212,12 @@ export function ReturnScanClient({
   }
 
   async function handleManual(item: Item, delta: 1 | -1) {
-    if (completed || busy || (item.equipmentType === "bulk" && !canReturnBulk)) return;
+    if (
+      completed ||
+      busy ||
+      (item.equipmentType === "bulk" ? !canReturnBulk : !canReturnSerialized)
+    ) return;
+    const operation = beginOperation();
     setBusy(true);
     try {
       const result =
@@ -198,10 +234,8 @@ export function ReturnScanClient({
         return;
       }
       scanFeedbackSuccess();
-      if (item.equipmentType === "bulk" && result.returnedUnitsCount !== undefined) {
-        applyReturnedCount(item.id, result.returnedUnitsCount);
-      } else {
-        applyDelta(item.id, delta);
+      if (result.returnedUnitsCount !== undefined) {
+        applyReturnedCount(operation, item.id, result.returnedUnitsCount);
       }
     } finally {
       setBusy(false);
@@ -225,7 +259,10 @@ export function ReturnScanClient({
   }
 
   function Counter({ item }: { item: Item }) {
-    if (completed || (item.equipmentType === "bulk" && !canReturnBulk)) {
+    if (
+      completed ||
+      (item.equipmentType === "bulk" ? !canReturnBulk : !canReturnSerialized)
+    ) {
       return (
         <span className="min-w-[2.75rem] text-center text-xs tabular-nums text-muted-foreground">
           {item.returnedUnitsCount}/{item.loadedUnitsCount}
@@ -262,7 +299,7 @@ export function ReturnScanClient({
 
   return (
     <>
-      {!completed && (
+      {!completed && canReturnSerialized && (
         <>
           <div className="mb-3 grid grid-cols-3 gap-1 rounded-xl border border-border bg-card p-1">
             <button
@@ -338,7 +375,7 @@ export function ReturnScanClient({
                   {item.variantLabel ? ` · ${item.variantLabel}` : ""}
                 </span>
                 <div className="flex shrink-0 items-center gap-1.5">
-                  {!completed && item.equipmentType === "serialized" && (
+                  {!completed && canReturnSerialized && item.equipmentType === "serialized" && (
                     <button
                       type="button"
                       onClick={() => setDefectTarget({ kind: "manual", item })}
@@ -411,7 +448,7 @@ export function ReturnScanClient({
         </p>
       )}
 
-      {!completed && defectTarget && (
+      {!completed && canReturnSerialized && defectTarget && (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 sm:items-center">
           <div className="w-full max-w-sm rounded-2xl border border-border bg-card p-4 shadow-xl">
             <div className="mb-3 flex items-center gap-2">

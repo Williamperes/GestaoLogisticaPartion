@@ -12,6 +12,8 @@ import { getTeamMemberByUserId, teamMemberHasEventAccess } from "@/lib/team";
 
 import { LoadScanClient } from "./LoadScanClient";
 
+const LOAD_ROLES = new Set(["super_admin", "admin", "operations", "warehouse"]);
+
 export default async function ScanLoadPage({ params }: { params: Promise<{ eventId: string }> }) {
   const { eventId } = await params;
   const [event, context] = await Promise.all([
@@ -20,19 +22,26 @@ export default async function ScanLoadPage({ params }: { params: Promise<{ event
   ]);
   if (!event) notFound();
 
+  const organizationId = context?.primaryOrganization?.id;
+  if (!organizationId || event.organizationId !== organizationId) {
+    redirect("/events?error=Sem acesso a esta OS.");
+  }
+
   let extraCandidates: ExtraMaterialCandidate[] = [];
   let initialExtraLog: ExtraMaterialLog[] = [];
-  if (context?.role === "warehouse" && context.userId && context.primaryOrganization?.id) {
+  let warehouseHasAccess = false;
+  if (context?.role === "warehouse" && context.userId) {
     const member = await getTeamMemberByUserId(
       context.userId,
-      context.primaryOrganization.id
+      organizationId
     );
     const allowed = member ? await teamMemberHasEventAccess(member.id, eventId) : false;
     if (!allowed) redirect("/events?error=Sem acesso a esta OS.");
+    warehouseHasAccess = true;
 
     [extraCandidates, initialExtraLog] = await Promise.all([
-      listExtraMaterialCandidates(eventId, context.primaryOrganization.id),
-      listExtraMaterialLog(eventId, context.primaryOrganization.id),
+      listExtraMaterialCandidates(eventId, organizationId),
+      listExtraMaterialLog(eventId, organizationId),
     ]);
   }
 
@@ -57,6 +66,11 @@ export default async function ScanLoadPage({ params }: { params: Promise<{ event
         eventId={eventId}
         eventStatus={event.status}
         initialItems={items}
+        canMutateLoad={Boolean(
+          context?.role &&
+          LOAD_ROLES.has(context.role) &&
+          (context.role !== "warehouse" || warehouseHasAccess)
+        )}
         role={context?.role ?? null}
         extraCandidates={extraCandidates}
         initialExtraLog={initialExtraLog}

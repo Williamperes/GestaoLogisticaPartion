@@ -2,22 +2,18 @@
 
 import { revalidatePath } from "next/cache";
 
-import {
-  createSupabaseAdminClient,
-  createSupabaseServerClient,
-} from "@/lib/supabase/server";
-import { getCurrentAuthUser, getCurrentUserContext } from "@/lib/auth/session";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { getCurrentUserContext } from "@/lib/auth/session";
 import { getEquipmentUnitByQrCode } from "@/lib/inventory";
 import { getTeamMemberByUserId, teamMemberHasEventAccess } from "@/lib/team";
 
-type AdminClient = ReturnType<typeof createSupabaseAdminClient>;
-
-interface EeRef {
-  id: string;
+type SerializedScanRpcRow = {
+  event_equipment_id: string;
   equipment_id: string;
-  variant_id: string | null;
-  qty: number;
-}
+  equipment_unit_id: string;
+  loaded_units_count?: number;
+  returned_units_count?: number;
+};
 
 export interface ScanResult {
   ok: boolean;
@@ -25,6 +21,7 @@ export interface ScanResult {
   unitId?: string;
   equipmentId?: string;
   eventEquipmentId?: string;
+  loadedUnitsCount?: number;
   returnedUnitsCount?: number;
 }
 
@@ -74,6 +71,22 @@ const RETURN_ERRORS: Record<string, string> = {
   EXTRA_EVENT_STATE: "Esta OS não permite alterar devoluções.",
   EXTRA_RETURN_PENDING: "Ainda há equipamentos carregados pendentes de devolução.",
   EXTRA_RETURN_RANGE: "Quantidade de devolução inválida.",
+  SCAN_QR_NOT_FOUND: "QR não encontrado",
+  SCAN_EVENT_EQUIPMENT_NOT_FOUND: "Este equipamento não está vinculado à OS",
+  SCAN_RETURN_RANGE: "Unidade não carregada ou já retornada",
+  SCAN_INVALID_SELECTOR: "Dados de devolução inválidos.",
+};
+const LOAD_ERRORS: Record<string, string> = {
+  EXTRA_NOT_AUTHENTICATED: "Sua sessão expirou. Entre novamente.",
+  EXTRA_FORBIDDEN: "Sem acesso a esta OS.",
+  EXTRA_EVENT_STATE: "Esta OS não permite alterar a carga.",
+  SCAN_QR_NOT_FOUND: "QR não encontrado",
+  SCAN_EVENT_EQUIPMENT_NOT_FOUND: "Este equipamento não está vinculado à OS",
+  SCAN_NO_AVAILABLE_UNIT: "Sem unidades disponíveis para marcar.",
+  SCAN_UNIT_CONFLICT: "Esta unidade já está carregada em outra OS.",
+  SCAN_LOAD_COMPLETE: "Quantidade já completa.",
+  SCAN_NOT_LOADED: "Unidade não estava carregada",
+  SCAN_INVALID_SELECTOR: "Dados de carga inválidos.",
 };
 const RETURN_ROLES = new Set(["super_admin", "admin", "operations", "warehouse"]);
 const UUID_PATTERN =
@@ -144,9 +157,93 @@ function translateReturnError(message: string): string {
   return message;
 }
 
+function translateLoadError(message: string): string {
+  for (const [code, translated] of Object.entries(LOAD_ERRORS)) {
+    if (message.includes(code)) return translated;
+  }
+  return message;
+}
+
 function revalidateReturn(eventId: string) {
   revalidatePath(`/scan/return/${eventId}`);
   revalidatePath(`/events/${eventId}`);
+}
+
+function serializedScanSuccess(
+  data: unknown,
+  countKey: "loaded_units_count" | "returned_units_count"
+): ScanResult | null {
+  if (!isRecord(data)) return null;
+  const row = data as SerializedScanRpcRow;
+  const count = row[countKey];
+  if (
+    typeof row.event_equipment_id !== "string" ||
+    typeof row.equipment_id !== "string" ||
+    typeof row.equipment_unit_id !== "string" ||
+    !Number.isSafeInteger(count) ||
+    (count as number) < 0
+  ) return null;
+
+  return {
+    ok: true,
+    eventEquipmentId: row.event_equipment_id,
+    equipmentId: row.equipment_id,
+    unitId: row.equipment_unit_id,
+    ...(countKey === "loaded_units_count"
+      ? { loadedUnitsCount: count as number }
+      : { returnedUnitsCount: count as number }),
+  };
+}
+
+async function mutateSerializedLoad(
+  rpcName: "load_serialized_material" | "unload_serialized_material",
+  eventId: string,
+  eventEquipmentId: string | null,
+  qrCode: string | null
+): Promise<ScanResult> {
+  const authorizationError = await authorizeEventReturn(eventId);
+  if (authorizationError) return authorizationError;
+
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase.rpc(rpcName, {
+    p_event_id: eventId,
+    p_event_equipment_id: eventEquipmentId,
+    p_qr_code: qrCode,
+  });
+  if (error) return { ok: false, error: translateLoadError(error.message) };
+  const result = serializedScanSuccess(data, "loaded_units_count");
+  if (!result) return { ok: false, error: "Não foi possível atualizar a carga." };
+
+  revalidatePath(`/scan/load/${eventId}`);
+  revalidatePath(`/events/${eventId}`);
+  return result;
+}
+
+async function mutateSerializedReturn(
+  eventId: string,
+  eventEquipmentId: string | null,
+  qrCode: string | null,
+  condition: "ok" | DefectCondition,
+  note: string | null
+): Promise<ScanResult> {
+  const authorizationError = await authorizeEventReturn(eventId);
+  if (authorizationError) return authorizationError;
+
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase.rpc("return_serialized_material", {
+    p_event_id: eventId,
+    p_event_equipment_id: eventEquipmentId,
+    p_qr_code: qrCode,
+    p_condition: condition,
+    p_note: note,
+  });
+  if (error) return { ok: false, error: translateReturnError(error.message) };
+  const result = serializedScanSuccess(data, "returned_units_count");
+  if (!result) return { ok: false, error: "Não foi possível registrar a devolução." };
+
+  revalidateReturn(eventId);
+  if (condition !== "ok") revalidatePath("/maintenance");
+  return result;
 }
 
 type SerializedUnreturnRpcRow = {
@@ -405,279 +502,28 @@ export async function manualUnreturnBulk(
   return mutateBulkReturn("unreturn_bulk_material", eventId, eventEquipmentId, qty);
 }
 
-// Recalcula a contagem de carregados e sincroniza os flags da linha
-// event_equipment. Mantém bipar e desbipar simétricos: o que a carga
-// completa marca, a descarga parcial reverte.
-async function syncLoadedState(
-  supabase: AdminClient,
-  eeId: string,
-  qty: number,
-  userId: string
-) {
-  const { count } = await supabase
-    .from("event_equipment_units")
-    .select("*", { count: "exact", head: true })
-    .eq("event_equipment_id", eeId)
-    .not("loaded_at", "is", null);
-  const loadedCount = count ?? 0;
-
-  if (loadedCount >= qty) {
-    await supabase
-      .from("event_equipment")
-      .update({
-        separated: true,
-        loaded: true,
-        loaded_at: new Date().toISOString(),
-        loaded_by: userId,
-      })
-      .eq("id", eeId);
-  } else {
-    await supabase
-      .from("event_equipment")
-      .update({
-        separated: false,
-        loaded: false,
-        loaded_at: null,
-        loaded_by: null,
-      })
-      .eq("id", eeId);
-  }
-  return loadedCount;
-}
-
-// Idem para o retorno: a linha fica "retornada" só quando todas as
-// unidades carregadas voltaram; desfazer reabre a linha.
-async function syncReturnedState(supabase: AdminClient, eeId: string, qty: number) {
-  const { count } = await supabase
-    .from("event_equipment_units")
-    .select("*", { count: "exact", head: true })
-    .eq("event_equipment_id", eeId)
-    .not("returned_at", "is", null);
-  const returnedCount = count ?? 0;
-
-  await supabase
-    .from("event_equipment")
-    .update({ returned_at: returnedCount >= qty ? new Date().toISOString() : null })
-    .eq("id", eeId);
-  return returnedCount;
-}
-
-// ── Defeito no retorno ───────────────────────────────────────────────────────
-// Uma unidade pode voltar danificada ou ser dada como perdida. Em ambos os
-// casos ela sai de circulação (status maintenance/inactive — excluído de
-// findAvailableUnitId e getEquipmentAvailability) e abre uma ocorrência na
-// fila de manutenção (equipment_maintenance).
-
 export type DefectCondition = "damaged" | "lost";
-
-async function recordUnitDefect(
-  supabase: AdminClient,
-  args: {
-    equipmentUnitId: string;
-    equipmentId: string;
-    organizationId: string;
-    eventId: string;
-    eventEquipmentId: string;
-    condition: DefectCondition;
-    note: string | null;
-    userId: string;
-  }
-) {
-  await supabase
-    .from("event_equipment_units")
-    .update({ return_condition: args.condition, defect_note: args.note })
-    .eq("event_equipment_id", args.eventEquipmentId)
-    .eq("equipment_unit_id", args.equipmentUnitId);
-
-  await supabase
-    .from("equipment_units")
-    .update({ status: args.condition === "lost" ? "inactive" : "maintenance" })
-    .eq("id", args.equipmentUnitId);
-
-  await supabase.from("equipment_maintenance").insert({
-    organization_id: args.organizationId,
-    equipment_id: args.equipmentId,
-    equipment_unit_id: args.equipmentUnitId,
-    event_id: args.eventId,
-    condition: args.condition,
-    note: args.note,
-    opened_by: args.userId,
-  });
-}
-
-// Localiza a linha event_equipment de uma OS para um equipamento/variante.
-async function findEeRow(
-  supabase: AdminClient,
-  eventId: string,
-  equipmentId: string,
-  variantId: string | null
-) {
-  const eeQuery = supabase
-    .from("event_equipment")
-    .select("id, equipment_id, variant_id, qty")
-    .eq("event_id", eventId)
-    .eq("equipment_id", equipmentId);
-  const { data, error } = await (
-    variantId === null ? eeQuery.is("variant_id", null) : eeQuery.eq("variant_id", variantId)
-  ).maybeSingle();
-  return { data: data as EeRef | null, error };
-}
-
-// Carrega a linha event_equipment por id, garantindo que pertence à OS.
-async function getEeById(supabase: AdminClient, eventId: string, eventEquipmentId: string) {
-  const { data, error } = await supabase
-    .from("event_equipment")
-    .select("id, equipment_id, variant_id, qty")
-    .eq("id", eventEquipmentId)
-    .eq("event_id", eventId)
-    .maybeSingle();
-  return { data: data as EeRef | null, error };
-}
-
-// Próxima unidade do equipamento/variante ainda não vinculada a esta OS.
-// Usada na marcação manual (+1) — inclusive para unidades sem QR.
-async function findAvailableUnitId(supabase: AdminClient, ee: EeRef): Promise<string | null> {
-  const { data: used } = await supabase
-    .from("event_equipment_units")
-    .select("equipment_unit_id")
-    .eq("event_equipment_id", ee.id);
-  const usedIds = (used ?? []).map((r) => r.equipment_unit_id);
-
-  let q = supabase
-    .from("equipment_units")
-    .select("id")
-    .eq("equipment_id", ee.equipment_id)
-    .not("status", "in", "(maintenance,inactive)")
-    .order("created_at", { ascending: true })
-    .limit(1);
-  q = ee.variant_id === null ? q.is("variant_id", null) : q.eq("variant_id", ee.variant_id);
-  if (usedIds.length > 0) {
-    q = q.not("id", "in", `(${usedIds.join(",")})`);
-  }
-
-  const { data } = await q.maybeSingle();
-  return data?.id ?? null;
-}
 
 // ── Bipar por código ────────────────────────────────────────────────────────
 
 export async function scanLoadUnit(eventId: string, qrCode: string): Promise<ScanResult> {
-  const user = await getCurrentAuthUser();
-  if (!user) return { ok: false, error: "Não autenticado" };
-
   const trimmed = qrCode.trim();
   if (!trimmed) return { ok: false, error: "QR vazio" };
-
-  const unit = await getEquipmentUnitByQrCode(trimmed);
-  if (!unit) return { ok: false, error: "QR não encontrado" };
-
-  const supabase = createSupabaseAdminClient();
-  const { data: eeRow, error: eeErr } = await findEeRow(
-    supabase,
-    eventId,
-    unit.equipmentId,
-    unit.variantId
-  );
-  if (eeErr) return { ok: false, error: eeErr.message };
-  if (!eeRow) return { ok: false, error: "Este equipamento não está vinculado à OS" };
-
-  const { error: upsertErr } = await supabase
-    .from("event_equipment_units")
-    .upsert(
-      {
-        event_equipment_id: eeRow.id,
-        equipment_unit_id: unit.id,
-        loaded_at: new Date().toISOString(),
-        loaded_by: user.id,
-      },
-      { onConflict: "event_equipment_id,equipment_unit_id" }
-    );
-  if (upsertErr) return { ok: false, error: upsertErr.message };
-
-  await syncLoadedState(supabase, eeRow.id, eeRow.qty, user.id);
-
-  revalidatePath(`/scan/load/${eventId}`);
-  revalidatePath(`/events/${eventId}`);
-  return { ok: true, unitId: unit.id, equipmentId: unit.equipmentId, eventEquipmentId: eeRow.id };
+  return mutateSerializedLoad("load_serialized_material", eventId, null, trimmed);
 }
 
 export async function scanReturnUnit(eventId: string, qrCode: string): Promise<ScanResult> {
-  const user = await getCurrentAuthUser();
-  if (!user) return { ok: false, error: "Não autenticado" };
-
   const trimmed = qrCode.trim();
   if (!trimmed) return { ok: false, error: "QR vazio" };
-
-  const unit = await getEquipmentUnitByQrCode(trimmed);
-  if (!unit) return { ok: false, error: "QR não encontrado" };
-
-  const supabase = createSupabaseAdminClient();
-  const { data: eeRow, error: eeErr } = await findEeRow(
-    supabase,
-    eventId,
-    unit.equipmentId,
-    unit.variantId
-  );
-  if (eeErr) return { ok: false, error: eeErr.message };
-  if (!eeRow) return { ok: false, error: "Este equipamento não está vinculado à OS" };
-
-  const { data: euRow, error: euErr } = await supabase
-    .from("event_equipment_units")
-    .update({ returned_at: new Date().toISOString(), returned_by: user.id })
-    .eq("event_equipment_id", eeRow.id)
-    .eq("equipment_unit_id", unit.id)
-    .not("loaded_at", "is", null)
-    .is("returned_at", null)
-    .select("id")
-    .maybeSingle();
-  if (euErr) return { ok: false, error: euErr.message };
-  if (!euRow) return { ok: false, error: "Unidade não carregada ou já retornada" };
-
-  await syncReturnedState(supabase, eeRow.id, eeRow.qty);
-
-  revalidatePath(`/scan/return/${eventId}`);
-  revalidatePath(`/events/${eventId}`);
-  return { ok: true, unitId: unit.id, equipmentId: unit.equipmentId, eventEquipmentId: eeRow.id };
+  return mutateSerializedReturn(eventId, null, trimmed, "ok", null);
 }
 
 // ── Desbipar por código ─────────────────────────────────────────────────────
 
 export async function unscanLoadUnit(eventId: string, qrCode: string): Promise<ScanResult> {
-  const user = await getCurrentAuthUser();
-  if (!user) return { ok: false, error: "Não autenticado" };
-
   const trimmed = qrCode.trim();
   if (!trimmed) return { ok: false, error: "QR vazio" };
-
-  const unit = await getEquipmentUnitByQrCode(trimmed);
-  if (!unit) return { ok: false, error: "QR não encontrado" };
-
-  const supabase = createSupabaseAdminClient();
-  const { data: eeRow, error: eeErr } = await findEeRow(
-    supabase,
-    eventId,
-    unit.equipmentId,
-    unit.variantId
-  );
-  if (eeErr) return { ok: false, error: eeErr.message };
-  if (!eeRow) return { ok: false, error: "Este equipamento não está vinculado à OS" };
-
-  const { data: deleted, error: delErr } = await supabase
-    .from("event_equipment_units")
-    .delete()
-    .eq("event_equipment_id", eeRow.id)
-    .eq("equipment_unit_id", unit.id)
-    .is("returned_at", null)
-    .select("id")
-    .maybeSingle();
-  if (delErr) return { ok: false, error: delErr.message };
-  if (!deleted) return { ok: false, error: "Unidade não estava carregada" };
-
-  await syncLoadedState(supabase, eeRow.id, eeRow.qty, user.id);
-
-  revalidatePath(`/scan/load/${eventId}`);
-  revalidatePath(`/events/${eventId}`);
-  return { ok: true, unitId: unit.id, equipmentId: unit.equipmentId, eventEquipmentId: eeRow.id };
+  return mutateSerializedLoad("unload_serialized_material", eventId, null, trimmed);
 }
 
 export async function unscanReturnUnit(eventId: string, qrCode: string): Promise<ScanResult> {
@@ -687,9 +533,16 @@ export async function unscanReturnUnit(eventId: string, qrCode: string): Promise
   const authorizationError = await authorizeEventReturn(eventId);
   if (authorizationError) return authorizationError;
 
-  const unit = await getEquipmentUnitByQrCode(trimmed);
-  if (!unit) return { ok: false, error: "QR não encontrado" };
-  return callUnreturnSerializedMaterial(eventId, null, unit.id);
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase.rpc("unreturn_serialized_material_by_qr", {
+    p_event_id: eventId,
+    p_qr_code: trimmed,
+  });
+  if (error) return { ok: false, error: translateReturnError(error.message) };
+  const result = serializedScanSuccess(data, "returned_units_count");
+  if (!result) return { ok: false, error: "Não foi possível desfazer a devolução." };
+  revalidateReturn(eventId);
+  return result;
 }
 
 // ── Finalização da OS pelo fluxo de scan ─────────────────────────────────────
@@ -698,26 +551,14 @@ export async function unscanReturnUnit(eventId: string, qrCode: string): Promise
 // "Em campo" e o retorno completo a "Conclui".
 
 export async function finalizeLoad(eventId: string): Promise<ScanResult> {
-  const user = await getCurrentAuthUser();
-  if (!user) return { ok: false, error: "Não autenticado" };
-
-  const supabase = createSupabaseAdminClient();
-  const { data: ev, error: evErr } = await supabase
-    .from("events")
-    .select("status")
-    .eq("id", eventId)
-    .maybeSingle();
-  if (evErr) return { ok: false, error: evErr.message };
-  if (!ev) return { ok: false, error: "OS não encontrada" };
-  if (ev.status === "in_field") return { ok: true };
-  if (ev.status !== "ready_to_load")
-    return { ok: false, error: "A OS precisa estar em 'Pronto p/ Carga' para sair em campo." };
-
-  const { error } = await supabase
-    .from("events")
-    .update({ status: "in_field" })
-    .eq("id", eventId);
-  if (error) return { ok: false, error: error.message };
+  const authorizationError = await authorizeEventReturn(eventId);
+  if (authorizationError) return authorizationError;
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase.rpc("finalize_event_load", {
+    p_event_id: eventId,
+  });
+  if (error) return { ok: false, error: translateLoadError(error.message) };
+  if (data !== true) return { ok: false, error: "Não foi possível finalizar a carga." };
 
   revalidatePath(`/scan/load/${eventId}`);
   revalidatePath(`/scan/return/${eventId}`);
@@ -746,114 +587,21 @@ export async function manualLoadUnit(
   eventId: string,
   eventEquipmentId: string
 ): Promise<ScanResult> {
-  const user = await getCurrentAuthUser();
-  if (!user) return { ok: false, error: "Não autenticado" };
-
-  const supabase = createSupabaseAdminClient();
-  const { data: ee, error: eeErr } = await getEeById(supabase, eventId, eventEquipmentId);
-  if (eeErr) return { ok: false, error: eeErr.message };
-  if (!ee) return { ok: false, error: "Equipamento não encontrado na OS" };
-
-  const { count: already } = await supabase
-    .from("event_equipment_units")
-    .select("*", { count: "exact", head: true })
-    .eq("event_equipment_id", ee.id)
-    .not("loaded_at", "is", null);
-  if ((already ?? 0) >= ee.qty) return { ok: false, error: "Quantidade já completa." };
-
-  const unitId = await findAvailableUnitId(supabase, ee);
-  if (!unitId) return { ok: false, error: "Sem unidades disponíveis para marcar." };
-
-  const { error: upsertErr } = await supabase
-    .from("event_equipment_units")
-    .upsert(
-      {
-        event_equipment_id: ee.id,
-        equipment_unit_id: unitId,
-        loaded_at: new Date().toISOString(),
-        loaded_by: user.id,
-      },
-      { onConflict: "event_equipment_id,equipment_unit_id" }
-    );
-  if (upsertErr) return { ok: false, error: upsertErr.message };
-
-  await syncLoadedState(supabase, ee.id, ee.qty, user.id);
-
-  revalidatePath(`/scan/load/${eventId}`);
-  revalidatePath(`/events/${eventId}`);
-  return { ok: true, equipmentId: ee.equipment_id, eventEquipmentId: ee.id };
+  return mutateSerializedLoad("load_serialized_material", eventId, eventEquipmentId, null);
 }
 
 export async function manualUnloadUnit(
   eventId: string,
   eventEquipmentId: string
 ): Promise<ScanResult> {
-  const user = await getCurrentAuthUser();
-  if (!user) return { ok: false, error: "Não autenticado" };
-
-  const supabase = createSupabaseAdminClient();
-  const { data: ee, error: eeErr } = await getEeById(supabase, eventId, eventEquipmentId);
-  if (eeErr) return { ok: false, error: eeErr.message };
-  if (!ee) return { ok: false, error: "Equipamento não encontrado na OS" };
-
-  const { data: row } = await supabase
-    .from("event_equipment_units")
-    .select("id")
-    .eq("event_equipment_id", ee.id)
-    .not("loaded_at", "is", null)
-    .is("returned_at", null)
-    .order("loaded_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (!row) return { ok: false, error: "Nada para desbipar." };
-
-  const { error: delErr } = await supabase
-    .from("event_equipment_units")
-    .delete()
-    .eq("id", row.id);
-  if (delErr) return { ok: false, error: delErr.message };
-
-  await syncLoadedState(supabase, ee.id, ee.qty, user.id);
-
-  revalidatePath(`/scan/load/${eventId}`);
-  revalidatePath(`/events/${eventId}`);
-  return { ok: true, equipmentId: ee.equipment_id, eventEquipmentId: ee.id };
+  return mutateSerializedLoad("unload_serialized_material", eventId, eventEquipmentId, null);
 }
 
 export async function manualReturnUnit(
   eventId: string,
   eventEquipmentId: string
 ): Promise<ScanResult> {
-  const user = await getCurrentAuthUser();
-  if (!user) return { ok: false, error: "Não autenticado" };
-
-  const supabase = createSupabaseAdminClient();
-  const { data: ee, error: eeErr } = await getEeById(supabase, eventId, eventEquipmentId);
-  if (eeErr) return { ok: false, error: eeErr.message };
-  if (!ee) return { ok: false, error: "Equipamento não encontrado na OS" };
-
-  const { data: row } = await supabase
-    .from("event_equipment_units")
-    .select("id")
-    .eq("event_equipment_id", ee.id)
-    .not("loaded_at", "is", null)
-    .is("returned_at", null)
-    .order("loaded_at", { ascending: true })
-    .limit(1)
-    .maybeSingle();
-  if (!row) return { ok: false, error: "Nenhuma unidade carregada para retornar." };
-
-  const { error: updErr } = await supabase
-    .from("event_equipment_units")
-    .update({ returned_at: new Date().toISOString(), returned_by: user.id })
-    .eq("id", row.id);
-  if (updErr) return { ok: false, error: updErr.message };
-
-  await syncReturnedState(supabase, ee.id, ee.qty);
-
-  revalidatePath(`/scan/return/${eventId}`);
-  revalidatePath(`/events/${eventId}`);
-  return { ok: true, equipmentId: ee.equipment_id, eventEquipmentId: ee.id };
+  return mutateSerializedReturn(eventId, eventEquipmentId, null, "ok", null);
 }
 
 // ── Retorno com defeito ──────────────────────────────────────────────────────
@@ -867,53 +615,12 @@ export async function scanReturnDefectUnit(
   condition: DefectCondition,
   note: string
 ): Promise<ScanResult> {
-  const user = await getCurrentAuthUser();
-  if (!user) return { ok: false, error: "Não autenticado" };
-
   const trimmed = qrCode.trim();
   if (!trimmed) return { ok: false, error: "QR vazio" };
-
-  const unit = await getEquipmentUnitByQrCode(trimmed);
-  if (!unit) return { ok: false, error: "QR não encontrado" };
-
-  const supabase = createSupabaseAdminClient();
-  const { data: eeRow, error: eeErr } = await findEeRow(
-    supabase,
-    eventId,
-    unit.equipmentId,
-    unit.variantId
-  );
-  if (eeErr) return { ok: false, error: eeErr.message };
-  if (!eeRow) return { ok: false, error: "Este equipamento não está vinculado à OS" };
-
-  const { data: euRow, error: euErr } = await supabase
-    .from("event_equipment_units")
-    .update({ returned_at: new Date().toISOString(), returned_by: user.id })
-    .eq("event_equipment_id", eeRow.id)
-    .eq("equipment_unit_id", unit.id)
-    .not("loaded_at", "is", null)
-    .is("returned_at", null)
-    .select("id")
-    .maybeSingle();
-  if (euErr) return { ok: false, error: euErr.message };
-  if (!euRow) return { ok: false, error: "Unidade não carregada ou já retornada" };
-
-  await recordUnitDefect(supabase, {
-    equipmentUnitId: unit.id,
-    equipmentId: unit.equipmentId,
-    organizationId: unit.organizationId,
-    eventId,
-    eventEquipmentId: eeRow.id,
-    condition,
-    note: note.trim() || null,
-    userId: user.id,
-  });
-  await syncReturnedState(supabase, eeRow.id, eeRow.qty);
-
-  revalidatePath(`/scan/return/${eventId}`);
-  revalidatePath(`/events/${eventId}`);
-  revalidatePath("/maintenance");
-  return { ok: true, unitId: unit.id, equipmentId: unit.equipmentId, eventEquipmentId: eeRow.id };
+  if (condition !== "damaged" && condition !== "lost") {
+    return { ok: false, error: "Condição de devolução inválida." };
+  }
+  return mutateSerializedReturn(eventId, null, trimmed, condition, note.trim() || null);
 }
 
 export async function manualReturnDefectUnit(
@@ -922,55 +629,16 @@ export async function manualReturnDefectUnit(
   condition: DefectCondition,
   note: string
 ): Promise<ScanResult> {
-  const user = await getCurrentAuthUser();
-  if (!user) return { ok: false, error: "Não autenticado" };
-
-  const supabase = createSupabaseAdminClient();
-  const { data: ee, error: eeErr } = await getEeById(supabase, eventId, eventEquipmentId);
-  if (eeErr) return { ok: false, error: eeErr.message };
-  if (!ee) return { ok: false, error: "Equipamento não encontrado na OS" };
-
-  const { data: row } = await supabase
-    .from("event_equipment_units")
-    .select("id, equipment_unit_id")
-    .eq("event_equipment_id", ee.id)
-    .not("loaded_at", "is", null)
-    .is("returned_at", null)
-    .order("loaded_at", { ascending: true })
-    .limit(1)
-    .maybeSingle();
-  if (!row) return { ok: false, error: "Nenhuma unidade carregada para retornar." };
-
-  // organization_id da unidade para o registro de manutenção.
-  const { data: eq } = await supabase
-    .from("equipment")
-    .select("organization_id")
-    .eq("id", ee.equipment_id)
-    .maybeSingle();
-  if (!eq) return { ok: false, error: "Equipamento não encontrado." };
-
-  const { error: updErr } = await supabase
-    .from("event_equipment_units")
-    .update({ returned_at: new Date().toISOString(), returned_by: user.id })
-    .eq("id", row.id);
-  if (updErr) return { ok: false, error: updErr.message };
-
-  await recordUnitDefect(supabase, {
-    equipmentUnitId: row.equipment_unit_id,
-    equipmentId: ee.equipment_id,
-    organizationId: eq.organization_id,
+  if (condition !== "damaged" && condition !== "lost") {
+    return { ok: false, error: "Condição de devolução inválida." };
+  }
+  return mutateSerializedReturn(
     eventId,
-    eventEquipmentId: ee.id,
+    eventEquipmentId,
+    null,
     condition,
-    note: note.trim() || null,
-    userId: user.id,
-  });
-  await syncReturnedState(supabase, ee.id, ee.qty);
-
-  revalidatePath(`/scan/return/${eventId}`);
-  revalidatePath(`/events/${eventId}`);
-  revalidatePath("/maintenance");
-  return { ok: true, equipmentId: ee.equipment_id, eventEquipmentId: ee.id };
+    note.trim() || null
+  );
 }
 
 export async function manualUnreturnUnit(

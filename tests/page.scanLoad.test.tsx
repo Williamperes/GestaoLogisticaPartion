@@ -61,11 +61,13 @@ const listLog = vi.mocked(listExtraMaterialLog);
 
 const eventFixture = {
   id: "ev-1",
+  organizationId: "org-1",
   name: "Show Sul",
+  status: "ready_to_load",
   equipment: [
     { id: "ee1", equipmentName: "Mesa", variantLabel: null, qty: 2, loadedUnitsCount: 0, returnedUnitsCount: 0 },
   ],
-} as never;
+};
 
 describe("ScanLoadPage", () => {
   beforeEach(() => {
@@ -76,7 +78,7 @@ describe("ScanLoadPage", () => {
   afterEach(() => cleanup());
 
   it("renderiza o cabeçalho de carga do evento (admin)", async () => {
-    getEvent.mockResolvedValue(eventFixture);
+    getEvent.mockResolvedValue(eventFixture as never);
     getCtx.mockResolvedValue({ role: "admin", userId: "u1", primaryOrganization: { id: "org-1" } } as never);
 
     const ui = await ScanLoadPage({ params: Promise.resolve({ eventId: "ev-1" }) });
@@ -88,10 +90,41 @@ describe("ScanLoadPage", () => {
     expect(loadScanClient).toHaveBeenCalledWith(
       expect.objectContaining({
         role: "admin",
+        canMutateLoad: true,
         extraCandidates: [],
         initialExtraLog: [],
       })
     );
+  });
+
+  it("papel sem permissão recebe carga somente leitura", async () => {
+    getEvent.mockResolvedValue(eventFixture as never);
+    getCtx.mockResolvedValue({
+      role: "finance",
+      userId: "u1",
+      primaryOrganization: { id: "org-1" },
+    } as never);
+
+    const ui = await ScanLoadPage({ params: Promise.resolve({ eventId: "ev-1" }) });
+    const { render } = await import("@testing-library/react");
+    render(ui);
+
+    expect(loadScanClient).toHaveBeenCalledWith(
+      expect.objectContaining({ canMutateLoad: false })
+    );
+  });
+
+  it("bloqueia OS de outra organização antes de renderizar", async () => {
+    getEvent.mockResolvedValue({ ...eventFixture, organizationId: "org-other" } as never);
+    getCtx.mockResolvedValue({
+      role: "admin",
+      userId: "u1",
+      primaryOrganization: { id: "org-1" },
+    } as never);
+
+    await expect(
+      ScanLoadPage({ params: Promise.resolve({ eventId: "ev-1" }) })
+    ).rejects.toThrow(/REDIRECT:\/events/);
   });
 
   it("chama notFound quando o evento não existe", async () => {
@@ -103,7 +136,7 @@ describe("ScanLoadPage", () => {
   });
 
   it("warehouse sem acesso à OS é redirecionado", async () => {
-    getEvent.mockResolvedValue(eventFixture);
+    getEvent.mockResolvedValue(eventFixture as never);
     getCtx.mockResolvedValue({ role: "warehouse", userId: "u1", primaryOrganization: { id: "org-1" } } as never);
     getMember.mockResolvedValue({ id: "m-1" } as never);
     hasAccess.mockResolvedValue(false);
@@ -115,7 +148,7 @@ describe("ScanLoadPage", () => {
   });
 
   it("warehouse com acesso consulta e propaga os dados extras da OS e organização atuais", async () => {
-    getEvent.mockResolvedValue(eventFixture);
+    getEvent.mockResolvedValue(eventFixture as never);
     getCtx.mockResolvedValue({ role: "warehouse", userId: "u1", primaryOrganization: { id: "org-1" } } as never);
     getMember.mockResolvedValue({ id: "m-1" } as never);
     hasAccess.mockResolvedValue(true);

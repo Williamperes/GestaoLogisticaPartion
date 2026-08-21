@@ -756,6 +756,7 @@ security definer
 set search_path = public, pg_temp
 as $$
 declare
+  org_id uuid;
   ee_id uuid;
   equipment_id uuid;
   target_row_id uuid;
@@ -764,6 +765,11 @@ declare
   returned_count integer;
 begin
   perform public.assert_event_return_access(p_event_id);
+
+  select e.organization_id
+    into org_id
+  from public.events e
+  where e.id = p_event_id;
 
   if (p_event_equipment_id is null) = (p_equipment_unit_id is null) then
     raise exception 'EXTRA_RETURN_RANGE' using errcode = 'P0001';
@@ -776,6 +782,7 @@ begin
     join public.equipment equipment on equipment.id = ee.equipment_id
     where ee.id = p_event_equipment_id
       and ee.event_id = p_event_id
+      and equipment.organization_id = org_id
       and equipment.type = 'serialized'::public.equipment_type;
   else
     select ee.id, ee.equipment_id, ee.qty
@@ -785,6 +792,7 @@ begin
     join public.equipment equipment on equipment.id = ee.equipment_id
     where ee.event_id = p_event_id
       and eeu.equipment_unit_id = p_equipment_unit_id
+      and equipment.organization_id = org_id
       and equipment.type = 'serialized'::public.equipment_type
     order by ee.id
     limit 1;
@@ -831,10 +839,6 @@ begin
   set returned_at = case
         when returned_count >= target_qty then coalesce(ee.returned_at, timezone('utc', now()))
         else null
-      end,
-      returned_by = case
-        when returned_count >= target_qty then coalesce(ee.returned_by, auth.uid())
-        else null
       end
   where ee.id = ee_id
     and ee.event_id = p_event_id;
@@ -850,3 +854,580 @@ $$;
 
 revoke execute on function public.unreturn_serialized_material(uuid, uuid, uuid) from public;
 grant execute on function public.unreturn_serialized_material(uuid, uuid, uuid) to authenticated;
+
+-- Toda mutação da carga serializada adere ao mesmo protocolo de lock da OS.
+-- Assim nenhuma unidade pode entrar depois que finalize_event_load ou
+-- finalize_event_return já confirmou uma transição de estado.
+create or replace function public.assert_event_load_access(target_event_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  org_id uuid;
+  event_state public.event_status;
+  caller_role public.app_role;
+begin
+  if auth.uid() is null then
+    raise exception 'EXTRA_NOT_AUTHENTICATED' using errcode = 'P0001';
+  end if;
+
+  select e.organization_id, e.status
+    into org_id, event_state
+  from public.events e
+  where e.id = target_event_id
+  for update;
+
+  if not found then
+    raise exception 'EXTRA_FORBIDDEN' using errcode = 'P0001';
+  end if;
+
+  if not public.has_org_role(org_id, array[
+      'super_admin'::public.app_role,
+      'admin'::public.app_role,
+      'operations'::public.app_role,
+      'warehouse'::public.app_role
+    ]) then
+    raise exception 'EXTRA_FORBIDDEN' using errcode = 'P0001';
+  end if;
+
+  select om.role
+    into caller_role
+  from public.organization_members om
+  where om.user_id = auth.uid()
+    and om.organization_id = org_id;
+
+  if caller_role = 'warehouse'::public.app_role and not exists (
+    select 1
+    from public.team_members tm
+    join public.event_date_team_members edtm on edtm.team_member_id = tm.id
+    join public.event_dates ed on ed.id = edtm.event_date_id
+    where tm.user_id = auth.uid()
+      and tm.organization_id = org_id
+      and ed.event_id = target_event_id
+  ) then
+    raise exception 'EXTRA_FORBIDDEN' using errcode = 'P0001';
+  end if;
+
+  if event_state <> 'ready_to_load'::public.event_status then
+    raise exception 'EXTRA_EVENT_STATE' using errcode = 'P0001';
+  end if;
+end;
+$$;
+
+revoke execute on function public.assert_event_load_access(uuid) from public;
+
+create or replace function public.load_serialized_material(
+  p_event_id uuid,
+  p_event_equipment_id uuid,
+  p_qr_code text
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  clean_qr text := nullif(btrim(p_qr_code), '');
+  org_id uuid;
+  ee_id uuid;
+  equipment_id uuid;
+  variant_id uuid;
+  target_qty integer;
+  target_unit_id uuid;
+  unit_status public.equipment_status;
+  loaded_count integer;
+begin
+  perform public.assert_event_load_access(p_event_id);
+
+  if (p_event_equipment_id is null) = (clean_qr is null) then
+    raise exception 'SCAN_INVALID_SELECTOR' using errcode = 'P0001';
+  end if;
+
+  select e.organization_id
+    into org_id
+  from public.events e
+  where e.id = p_event_id;
+
+  if clean_qr is not null then
+    select unit_row.id, unit_row.equipment_id, unit_row.variant_id, unit_row.status
+      into target_unit_id, equipment_id, variant_id, unit_status
+    from public.equipment_units unit_row
+    join public.equipment equipment on equipment.id = unit_row.equipment_id
+    where unit_row.qr_code = btrim(p_qr_code)
+      and equipment.organization_id = org_id
+      and equipment.type = 'serialized'::public.equipment_type
+    for update of unit_row;
+
+    if not found then
+      raise exception 'SCAN_QR_NOT_FOUND' using errcode = 'P0001';
+    end if;
+
+    select ee.id, ee.qty
+      into ee_id, target_qty
+    from public.event_equipment ee
+    where ee.event_id = p_event_id
+      and ee.equipment_id = equipment_id
+      and ee.variant_id is not distinct from variant_id
+    order by ee.created_at, ee.id
+    limit 1
+    for update of ee;
+  else
+    select ee.id, ee.equipment_id, ee.variant_id, ee.qty
+      into ee_id, equipment_id, variant_id, target_qty
+    from public.event_equipment ee
+    join public.equipment equipment on equipment.id = ee.equipment_id
+    where ee.id = p_event_equipment_id
+      and ee.event_id = p_event_id
+      and equipment.organization_id = org_id
+      and equipment.type = 'serialized'::public.equipment_type
+    for update of ee;
+
+    if not found then
+      raise exception 'SCAN_EVENT_EQUIPMENT_NOT_FOUND' using errcode = 'P0001';
+    end if;
+
+    select unit_row.id, unit_row.status
+      into target_unit_id, unit_status
+    from public.equipment_units unit_row
+    join public.equipment equipment on equipment.id = unit_row.equipment_id
+    where unit_row.equipment_id = equipment_id
+      and unit_row.variant_id is not distinct from variant_id
+      and equipment.organization_id = org_id
+      and equipment.type = 'serialized'::public.equipment_type
+      and unit_row.status not in (
+        'maintenance'::public.equipment_status,
+        'inactive'::public.equipment_status
+      )
+      and not exists (
+        select 1
+        from public.event_equipment_units same_event_unit
+        where same_event_unit.event_equipment_id = ee_id
+          and same_event_unit.equipment_unit_id = unit_row.id
+      )
+      and not exists (
+        select 1
+        from public.event_equipment_units active_unit
+        join public.event_equipment other_ee on other_ee.id = active_unit.event_equipment_id
+        join public.events other_event on other_event.id = other_ee.event_id
+        where active_unit.equipment_unit_id = unit_row.id
+          and other_event.id <> p_event_id
+          and other_event.status not in (
+            'cancelled'::public.event_status,
+            'completed'::public.event_status
+          )
+          and active_unit.loaded_at is not null
+          and active_unit.returned_at is null
+      )
+    order by unit_row.created_at, unit_row.id
+    limit 1
+    for update of unit_row;
+
+    if not found then
+      raise exception 'SCAN_NO_AVAILABLE_UNIT' using errcode = 'P0001';
+    end if;
+  end if;
+
+  if unit_status in (
+    'maintenance'::public.equipment_status,
+    'inactive'::public.equipment_status
+  ) then
+    raise exception 'SCAN_NO_AVAILABLE_UNIT' using errcode = 'P0001';
+  end if;
+
+  if ee_id is null then
+    raise exception 'SCAN_EVENT_EQUIPMENT_NOT_FOUND' using errcode = 'P0001';
+  end if;
+
+  if exists (
+    select 1
+    from public.event_equipment_units existing_unit
+    where existing_unit.event_equipment_id = ee_id
+      and existing_unit.equipment_unit_id = target_unit_id
+      and existing_unit.loaded_at is not null
+  ) then
+    select count(*)::integer
+      into loaded_count
+    from public.event_equipment_units eeu
+    where eeu.event_equipment_id = ee_id
+      and eeu.loaded_at is not null;
+
+    return jsonb_build_object(
+      'event_equipment_id', ee_id,
+      'equipment_id', equipment_id,
+      'equipment_unit_id', target_unit_id,
+      'loaded_units_count', loaded_count
+    );
+  end if;
+
+  if exists (
+    select 1
+    from public.event_equipment_units active_unit
+    join public.event_equipment other_ee on other_ee.id = active_unit.event_equipment_id
+    join public.events other_event on other_event.id = other_ee.event_id
+    where active_unit.equipment_unit_id = target_unit_id
+      and other_event.id <> p_event_id
+      and other_event.status not in (
+        'cancelled'::public.event_status,
+        'completed'::public.event_status
+      )
+      and active_unit.loaded_at is not null
+      and active_unit.returned_at is null
+  ) then
+    raise exception 'SCAN_UNIT_CONFLICT' using errcode = 'P0001';
+  end if;
+
+  select count(*)::integer
+    into loaded_count
+  from public.event_equipment_units eeu
+  where eeu.event_equipment_id = ee_id
+    and eeu.loaded_at is not null;
+
+  if loaded_count >= target_qty then
+    raise exception 'SCAN_LOAD_COMPLETE' using errcode = 'P0001';
+  end if;
+
+  insert into public.event_equipment_units as inserted_unit (
+    event_equipment_id,
+    equipment_unit_id,
+    loaded_at,
+    loaded_by,
+    returned_at,
+    returned_by,
+    return_condition,
+    defect_note
+  ) values (
+    ee_id,
+    target_unit_id,
+    timezone('utc', now()),
+    auth.uid(),
+    null,
+    null,
+    'ok'::public.unit_condition,
+    null
+  )
+  on conflict (event_equipment_id, equipment_unit_id)
+  do update set
+    loaded_at = excluded.loaded_at,
+    loaded_by = excluded.loaded_by,
+    returned_at = null,
+    returned_by = null,
+    return_condition = 'ok'::public.unit_condition,
+    defect_note = null;
+
+  select count(*)::integer
+    into loaded_count
+  from public.event_equipment_units eeu
+  where eeu.event_equipment_id = ee_id
+    and eeu.loaded_at is not null;
+
+  update public.event_equipment ee
+  set separated = loaded_count >= ee.qty,
+      separated_at = case when loaded_count >= ee.qty then coalesce(ee.separated_at, timezone('utc', now())) else null end,
+      separated_by = case when loaded_count >= ee.qty then coalesce(ee.separated_by, auth.uid()) else null end,
+      loaded = loaded_count >= ee.qty,
+      loaded_at = case when loaded_count >= ee.qty then coalesce(ee.loaded_at, timezone('utc', now())) else null end,
+      loaded_by = case when loaded_count >= ee.qty then coalesce(ee.loaded_by, auth.uid()) else null end
+  where ee.id = ee_id
+    and ee.event_id = p_event_id;
+
+  return jsonb_build_object(
+    'event_equipment_id', ee_id,
+    'equipment_id', equipment_id,
+    'equipment_unit_id', target_unit_id,
+    'loaded_units_count', loaded_count
+  );
+end;
+$$;
+
+revoke execute on function public.load_serialized_material(uuid, uuid, text) from public;
+grant execute on function public.load_serialized_material(uuid, uuid, text) to authenticated;
+
+create or replace function public.unload_serialized_material(
+  p_event_id uuid,
+  p_event_equipment_id uuid,
+  p_qr_code text
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  clean_qr text := nullif(btrim(p_qr_code), '');
+  org_id uuid;
+  ee_id uuid;
+  equipment_id uuid;
+  target_row_id uuid;
+  target_unit_id uuid;
+  loaded_count integer;
+begin
+  perform public.assert_event_load_access(p_event_id);
+
+  if (p_event_equipment_id is null) = (clean_qr is null) then
+    raise exception 'SCAN_INVALID_SELECTOR' using errcode = 'P0001';
+  end if;
+
+  select e.organization_id
+    into org_id
+  from public.events e
+  where e.id = p_event_id;
+
+  select eeu.id, eeu.equipment_unit_id, ee.id, ee.equipment_id
+    into target_row_id, target_unit_id, ee_id, equipment_id
+  from public.event_equipment_units eeu
+  join public.event_equipment ee on ee.id = eeu.event_equipment_id
+  join public.equipment equipment on equipment.id = ee.equipment_id
+  join public.equipment_units unit_row on unit_row.id = eeu.equipment_unit_id
+  where ee.event_id = p_event_id
+    and equipment.organization_id = org_id
+    and equipment.type = 'serialized'::public.equipment_type
+    and unit_row.equipment_id = ee.equipment_id
+    and eeu.loaded_at is not null
+    and eeu.returned_at is null
+    and (p_event_equipment_id is null or ee.id = p_event_equipment_id)
+    and (clean_qr is null or unit_row.qr_code = clean_qr)
+  order by eeu.loaded_at desc, eeu.id
+  limit 1
+  for update of eeu;
+
+  if not found then
+    raise exception 'SCAN_NOT_LOADED' using errcode = 'P0001';
+  end if;
+
+  perform 1
+  from public.event_equipment ee
+  where ee.id = ee_id
+    and ee.event_id = p_event_id
+  for update of ee;
+
+  delete from public.event_equipment_units
+  where id = target_row_id;
+
+  select count(*)::integer
+    into loaded_count
+  from public.event_equipment_units eeu
+  where eeu.event_equipment_id = ee_id
+    and eeu.loaded_at is not null;
+
+  update public.event_equipment ee
+  set separated = loaded_count >= ee.qty,
+      separated_at = case when loaded_count >= ee.qty then coalesce(ee.separated_at, timezone('utc', now())) else null end,
+      separated_by = case when loaded_count >= ee.qty then coalesce(ee.separated_by, auth.uid()) else null end,
+      loaded = loaded_count >= ee.qty,
+      loaded_at = case when loaded_count >= ee.qty then coalesce(ee.loaded_at, timezone('utc', now())) else null end,
+      loaded_by = case when loaded_count >= ee.qty then coalesce(ee.loaded_by, auth.uid()) else null end
+  where ee.id = ee_id
+    and ee.event_id = p_event_id;
+
+  return jsonb_build_object(
+    'event_equipment_id', ee_id,
+    'equipment_id', equipment_id,
+    'equipment_unit_id', target_unit_id,
+    'loaded_units_count', loaded_count
+  );
+end;
+$$;
+
+revoke execute on function public.unload_serialized_material(uuid, uuid, text) from public;
+grant execute on function public.unload_serialized_material(uuid, uuid, text) to authenticated;
+
+create or replace function public.finalize_event_load(p_event_id uuid)
+returns boolean
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  perform public.assert_event_load_access(p_event_id);
+
+  update public.events
+  set status = 'in_field'::public.event_status
+  where id = p_event_id
+    and status = 'ready_to_load'::public.event_status;
+
+  if not found then
+    raise exception 'EXTRA_EVENT_STATE' using errcode = 'P0001';
+  end if;
+
+  return true;
+end;
+$$;
+
+revoke execute on function public.finalize_event_load(uuid) from public;
+grant execute on function public.finalize_event_load(uuid) to authenticated;
+
+create or replace function public.return_serialized_material(
+  p_event_id uuid,
+  p_event_equipment_id uuid,
+  p_qr_code text,
+  p_condition public.unit_condition,
+  p_note text
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  clean_qr text := nullif(btrim(p_qr_code), '');
+  clean_note text := nullif(btrim(p_note), '');
+  org_id uuid;
+  ee_id uuid;
+  equipment_id uuid;
+  target_qty integer;
+  target_row_id uuid;
+  target_unit_id uuid;
+  returned_count integer;
+begin
+  perform public.assert_event_return_access(p_event_id);
+
+  if p_condition is null then
+    raise exception 'SCAN_INVALID_CONDITION' using errcode = 'P0001';
+  end if;
+
+  if (p_event_equipment_id is null) = (clean_qr is null) then
+    raise exception 'SCAN_INVALID_SELECTOR' using errcode = 'P0001';
+  end if;
+
+  select e.organization_id
+    into org_id
+  from public.events e
+  where e.id = p_event_id;
+
+  select eeu.id, eeu.equipment_unit_id, ee.id, ee.equipment_id, ee.qty
+    into target_row_id, target_unit_id, ee_id, equipment_id, target_qty
+  from public.event_equipment_units eeu
+  join public.event_equipment ee on ee.id = eeu.event_equipment_id
+  join public.equipment equipment on equipment.id = ee.equipment_id
+  join public.equipment_units unit_row on unit_row.id = eeu.equipment_unit_id
+  where ee.event_id = p_event_id
+    and equipment.organization_id = org_id
+    and equipment.type = 'serialized'::public.equipment_type
+    and unit_row.equipment_id = ee.equipment_id
+    and eeu.loaded_at is not null
+    and eeu.returned_at is null
+    and (p_event_equipment_id is null or ee.id = p_event_equipment_id)
+    and (clean_qr is null or unit_row.qr_code = btrim(p_qr_code))
+  order by eeu.loaded_at, eeu.id
+  limit 1
+  for update of eeu;
+
+  if not found then
+    raise exception 'SCAN_RETURN_RANGE' using errcode = 'P0001';
+  end if;
+
+  perform 1
+  from public.event_equipment ee
+  where ee.id = ee_id
+    and ee.event_id = p_event_id
+  for update of ee;
+
+  update public.event_equipment_units
+  set returned_at = timezone('utc', now()),
+      returned_by = auth.uid(),
+      return_condition = p_condition,
+      defect_note = case when p_condition = 'ok'::public.unit_condition then null else clean_note end
+  where id = target_row_id;
+
+  if p_condition in (
+    'damaged'::public.unit_condition,
+    'lost'::public.unit_condition
+  ) then
+    update public.equipment_units
+    set status = case
+      when p_condition = 'lost'::public.unit_condition
+        then 'inactive'::public.equipment_status
+      else 'maintenance'::public.equipment_status
+    end
+    where id = target_unit_id;
+
+    insert into public.equipment_maintenance (
+      organization_id,
+      equipment_id,
+      equipment_unit_id,
+      event_id,
+      condition,
+      note,
+      opened_by
+    ) values (
+      org_id,
+      equipment_id,
+      target_unit_id,
+      p_event_id,
+      p_condition,
+      clean_note,
+      auth.uid()
+    );
+  end if;
+
+  select count(*)::integer
+    into returned_count
+  from public.event_equipment_units eeu
+  where eeu.event_equipment_id = ee_id
+    and eeu.loaded_at is not null
+    and eeu.returned_at is not null;
+
+  update public.event_equipment ee
+  set returned_at = case
+    when returned_count >= target_qty then coalesce(ee.returned_at, timezone('utc', now()))
+    else null
+  end
+  where ee.id = ee_id
+    and ee.event_id = p_event_id;
+
+  return jsonb_build_object(
+    'event_equipment_id', ee_id,
+    'equipment_id', equipment_id,
+    'equipment_unit_id', target_unit_id,
+    'returned_units_count', returned_count
+  );
+end;
+$$;
+
+revoke execute on function public.return_serialized_material(uuid, uuid, text, public.unit_condition, text) from public;
+grant execute on function public.return_serialized_material(uuid, uuid, text, public.unit_condition, text) to authenticated;
+
+create or replace function public.unreturn_serialized_material_by_qr(
+  p_event_id uuid,
+  p_qr_code text
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  target_unit_id uuid;
+begin
+  perform public.assert_event_return_access(p_event_id);
+
+  select eeu.equipment_unit_id
+    into target_unit_id
+  from public.event_equipment_units eeu
+  join public.event_equipment ee on ee.id = eeu.event_equipment_id
+  join public.equipment equipment on equipment.id = ee.equipment_id
+  join public.events event_row on event_row.id = ee.event_id
+  join public.equipment_units unit_row on unit_row.id = eeu.equipment_unit_id
+  where ee.event_id = p_event_id
+    and equipment.organization_id = event_row.organization_id
+    and equipment.type = 'serialized'::public.equipment_type
+    and unit_row.equipment_id = ee.equipment_id
+    and unit_row.qr_code = btrim(p_qr_code)
+    and eeu.loaded_at is not null
+    and eeu.returned_at is not null
+  order by eeu.returned_at desc, eeu.id
+  limit 1
+  for update of eeu;
+
+  if not found then
+    raise exception 'EXTRA_RETURN_RANGE' using errcode = 'P0001';
+  end if;
+
+  return public.unreturn_serialized_material(p_event_id, null, target_unit_id);
+end;
+$$;
+
+revoke execute on function public.unreturn_serialized_material_by_qr(uuid, text) from public;
+grant execute on function public.unreturn_serialized_material_by_qr(uuid, text) to authenticated;

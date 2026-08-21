@@ -66,7 +66,11 @@ describe("ScanReturnPage", () => {
     render(ui);
     expect(screen.getByRole("heading", { name: /Retornar/ })).toHaveTextContent("Show Sul");
     expect(mocks.returnScanClient).toHaveBeenCalledWith(
-      expect.objectContaining({ canReturnBulk: false, canFinalizeReturn: true }),
+      expect.objectContaining({
+        canReturnBulk: false,
+        canReturnSerialized: true,
+        canFinalizeReturn: true,
+      }),
       undefined
     );
   });
@@ -104,7 +108,33 @@ describe("ScanReturnPage", () => {
     render(ui);
 
     expect(mocks.returnScanClient).toHaveBeenCalledWith(
-      expect.objectContaining({ canReturnBulk: true, canFinalizeReturn: true }),
+      expect.objectContaining({
+        canReturnBulk: true,
+        canReturnSerialized: true,
+        canFinalizeReturn: true,
+      }),
+      undefined
+    );
+  });
+
+  it("papel sem permissão recebe retorno somente leitura", async () => {
+    getEvent.mockResolvedValue(eventFixture as never);
+    getCtx.mockResolvedValue({
+      role: "finance",
+      userId: "u1",
+      primaryOrganization: { id: "org-1" },
+    } as never);
+
+    const ui = await ScanReturnPage({ params: Promise.resolve({ eventId: "ev-1" }) });
+    const { render } = await import("@testing-library/react");
+    render(ui);
+
+    expect(mocks.returnScanClient).toHaveBeenCalledWith(
+      expect.objectContaining({
+        canReturnBulk: false,
+        canReturnSerialized: false,
+        canFinalizeReturn: false,
+      }),
       undefined
     );
   });

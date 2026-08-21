@@ -51,13 +51,23 @@ interface ScanActionResult {
 const scanReturnUnit = vi.fn(async (): Promise<ScanActionResult> => ({
   ok: true,
   eventEquipmentId: "e1",
+  returnedUnitsCount: 2,
 }));
 const unscanReturnUnit = vi.fn(async (): Promise<ScanActionResult> => ({
   ok: true,
   eventEquipmentId: "e1",
+  returnedUnitsCount: 0,
 }));
-const manualReturnUnit = vi.fn(async (): Promise<ScanActionResult> => ({ ok: true }));
-const manualUnreturnUnit = vi.fn(async (): Promise<ScanActionResult> => ({ ok: true }));
+const manualReturnUnit = vi.fn(async (): Promise<ScanActionResult> => ({
+  ok: true,
+  eventEquipmentId: "e1",
+  returnedUnitsCount: 2,
+}));
+const manualUnreturnUnit = vi.fn(async (): Promise<ScanActionResult> => ({
+  ok: true,
+  eventEquipmentId: "e1",
+  returnedUnitsCount: 0,
+}));
 const manualReturnBulk = vi.fn(async (): Promise<ScanActionResult> => ({
   ok: true,
   returnedUnitsCount: 1,
@@ -89,10 +99,10 @@ beforeEach(() => {
   scannerOnResult = null;
   scannerOnError = null;
   vi.clearAllMocks();
-  scanReturnUnit.mockResolvedValue({ ok: true, eventEquipmentId: "e1" });
-  unscanReturnUnit.mockResolvedValue({ ok: true, eventEquipmentId: "e1" });
-  manualReturnUnit.mockResolvedValue({ ok: true });
-  manualUnreturnUnit.mockResolvedValue({ ok: true });
+  scanReturnUnit.mockResolvedValue({ ok: true, eventEquipmentId: "e1", returnedUnitsCount: 2 });
+  unscanReturnUnit.mockResolvedValue({ ok: true, eventEquipmentId: "e1", returnedUnitsCount: 0 });
+  manualReturnUnit.mockResolvedValue({ ok: true, eventEquipmentId: "e1", returnedUnitsCount: 2 });
+  manualUnreturnUnit.mockResolvedValue({ ok: true, eventEquipmentId: "e1", returnedUnitsCount: 0 });
   manualReturnBulk.mockResolvedValue({ ok: true, returnedUnitsCount: 1 });
   manualUnreturnBulk.mockResolvedValue({ ok: true, returnedUnitsCount: 0 });
   finalizeReturn.mockResolvedValue({ ok: true });
@@ -174,6 +184,55 @@ describe("ReturnScanClient — render default", () => {
     );
     expect(screen.getByText("0/1 unidades")).toBeInTheDocument();
     expect(screen.queryByText("Cabo extra")).not.toBeInTheDocument();
+  });
+
+  it("não reaplica retorno serialized quando props canônicas avançam durante a action", async () => {
+    let resolveAction: (result: ScanActionResult) => void = () => {};
+    manualReturnUnit.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveAction = resolve; })
+    );
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <ReturnScanClient eventId="ev1" eventStatus="in_field" initialItems={items} />
+    );
+
+    await user.click(screen.getAllByRole("button", { name: "Bipar 1" })[0]);
+    rerender(
+      <ReturnScanClient
+        eventId="ev1"
+        eventStatus="in_field"
+        initialItems={[{ ...items[0], returnedUnitsCount: 2 }, items[1]]}
+      />
+    );
+    expect(screen.getByText("4/5 unidades")).toBeInTheDocument();
+
+    await act(async () => {
+      resolveAction({
+        ok: true,
+        eventEquipmentId: "e1",
+        returnedUnitsCount: 2,
+      });
+    });
+
+    expect(screen.getByText("4/5 unidades")).toBeInTheDocument();
+    expect(screen.queryByText("5/5 unidades")).not.toBeInTheDocument();
+  });
+
+  it("oculta mutações serializadas para papel sem permissão", () => {
+    render(
+      <ReturnScanClient
+        eventId="ev1"
+        eventStatus="in_field"
+        initialItems={items}
+        canReturnSerialized={false}
+        canReturnBulk={false}
+      />
+    );
+
+    expect(screen.queryByTestId("fake-scan")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Marcar defeito" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Bipar 1" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Desbipar 1" })).not.toBeInTheDocument();
   });
 });
 

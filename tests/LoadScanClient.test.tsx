@@ -45,19 +45,30 @@ vi.mock("next/navigation", () => ({
 interface ScanActionResult {
   ok: boolean;
   eventEquipmentId?: string;
+  loadedUnitsCount?: number;
   error?: string;
 }
 
 const scanLoadUnit = vi.fn(async (): Promise<ScanActionResult> => ({
   ok: true,
   eventEquipmentId: "e1",
+  loadedUnitsCount: 2,
 }));
 const unscanLoadUnit = vi.fn(async (): Promise<ScanActionResult> => ({
   ok: true,
   eventEquipmentId: "e1",
+  loadedUnitsCount: 0,
 }));
-const manualLoadUnit = vi.fn(async (): Promise<ScanActionResult> => ({ ok: true }));
-const manualUnloadUnit = vi.fn(async (): Promise<ScanActionResult> => ({ ok: true }));
+const manualLoadUnit = vi.fn(async (): Promise<ScanActionResult> => ({
+  ok: true,
+  eventEquipmentId: "e1",
+  loadedUnitsCount: 2,
+}));
+const manualUnloadUnit = vi.fn(async (): Promise<ScanActionResult> => ({
+  ok: true,
+  eventEquipmentId: "e1",
+  loadedUnitsCount: 0,
+}));
 const finalizeLoad = vi.fn(async (): Promise<ScanActionResult> => ({ ok: true }));
 vi.mock("@/app/(dashboard)/scan/actions", () => ({
   scanLoadUnit: (...a: unknown[]) => scanLoadUnit(...(a as [])),
@@ -122,10 +133,10 @@ beforeEach(() => {
   scannerOnResult = null;
   scannerOnError = null;
   vi.clearAllMocks();
-  scanLoadUnit.mockResolvedValue({ ok: true, eventEquipmentId: "e1" });
-  unscanLoadUnit.mockResolvedValue({ ok: true, eventEquipmentId: "e1" });
-  manualLoadUnit.mockResolvedValue({ ok: true });
-  manualUnloadUnit.mockResolvedValue({ ok: true });
+  scanLoadUnit.mockResolvedValue({ ok: true, eventEquipmentId: "e1", loadedUnitsCount: 2 });
+  unscanLoadUnit.mockResolvedValue({ ok: true, eventEquipmentId: "e1", loadedUnitsCount: 0 });
+  manualLoadUnit.mockResolvedValue({ ok: true, eventEquipmentId: "e1", loadedUnitsCount: 2 });
+  manualUnloadUnit.mockResolvedValue({ ok: true, eventEquipmentId: "e1", loadedUnitsCount: 0 });
   finalizeLoad.mockResolvedValue({ ok: true });
 });
 
@@ -150,6 +161,39 @@ describe("LoadScanClient — render default", () => {
   it("mostra mensagem de vazio sem itens", () => {
     renderClient({ initialItems: [] });
     expect(screen.getByText("Nenhum equipamento nesta OS.")).toBeInTheDocument();
+  });
+
+  it("não reaplica carga quando props canônicas avançam durante a action", async () => {
+    let resolveAction: (result: ScanActionResult) => void = () => {};
+    manualLoadUnit.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveAction = resolve; })
+    );
+    const user = userEvent.setup();
+    const { rerender } = renderClient();
+
+    await user.click(screen.getAllByRole("button", { name: "Bipar 1" })[0]);
+    rerender(
+      <LoadScanClient
+        {...defaultProps}
+        initialItems={[{ ...items[0], loadedUnitsCount: 2 }, items[1]]}
+      />
+    );
+    expect(screen.getByText("4/5 unidades")).toBeInTheDocument();
+
+    await act(async () => {
+      resolveAction({ ok: true, eventEquipmentId: "e1", loadedUnitsCount: 2 });
+    });
+
+    expect(screen.getByText("4/5 unidades")).toBeInTheDocument();
+    expect(screen.queryByText("5/5 unidades")).not.toBeInTheDocument();
+  });
+
+  it("fica somente leitura sem permissão para mutar carga", () => {
+    renderClient({ canMutateLoad: false });
+
+    expect(screen.queryByTestId("fake-scan")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Bipar 1" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Desbipar 1" })).not.toBeInTheDocument();
   });
 
   it("mostra Material a mais somente para warehouse e abre o painel real", async () => {

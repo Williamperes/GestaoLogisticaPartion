@@ -183,9 +183,13 @@ describe("migration 026 — material extra", () => {
 
     expect(unreturn).toMatch(/perform public\.assert_event_return_access\(p_event_id\)/);
     expect(unreturn).toMatch(/ee\.event_id = p_event_id/);
+    expect(unreturn).toMatch(/equipment\.organization_id = org_id/);
     expect(unreturn).toMatch(/for update of ee/);
     expect(unreturn).toMatch(/for update of eeu/);
     expect(unreturn).toMatch(/set returned_at = null,[\s\S]*returned_by = null/);
+    expect(unreturn).not.toMatch(
+      /update public\.event_equipment ee[\s\S]*set returned_at[\s\S]*returned_by/
+    );
     expect(unreturn).toMatch(
       /revoke execute on function public\.unreturn_serialized_material\(uuid, uuid, uuid\) from public;/
     );
@@ -200,5 +204,96 @@ describe("migration 026 — material extra", () => {
         /update public\.event_equipment ee[\s\S]*where ee\.id = p_event_equipment_id[\s\S]*and ee\.event_id = p_event_id/
       );
     }
+  });
+
+  it("protege carga serializada com tenant, papel, vínculo, estado e lock da OS", () => {
+    const helper = functionDefinition("assert_event_load_access");
+
+    expect(helper).toMatch(/security definer/);
+    expect(helper).toMatch(/set search_path = public, pg_temp/);
+    expect(helper).toMatch(
+      /has_org_role\(org_id, array\[[\s\S]*'super_admin'[\s\S]*'admin'[\s\S]*'operations'[\s\S]*'warehouse'/
+    );
+    expect(helper).toMatch(/organization_members[\s\S]*caller_role = 'warehouse'/);
+    expect(helper).toMatch(/event_date_team_members/);
+    expect(helper).toMatch(/event_state <> 'ready_to_load'/);
+    expect(helper).toMatch(/for update/);
+    expect(helper).toMatch(
+      /revoke execute on function public\.assert_event_load_access\(uuid\) from public;/
+    );
+    expect(helper).not.toMatch(/grant execute/);
+  });
+
+  it.each([
+    ["load_serialized_material", "uuid, uuid, text", "assert_event_load_access"],
+    ["unload_serialized_material", "uuid, uuid, text", "assert_event_load_access"],
+    ["finalize_event_load", "uuid", "assert_event_load_access"],
+    [
+      "return_serialized_material",
+      "uuid, uuid, text, public.unit_condition, text",
+      "assert_event_return_access",
+    ],
+    [
+      "unreturn_serialized_material_by_qr",
+      "uuid, text",
+      "assert_event_return_access",
+    ],
+  ])("%s é uma RPC de sessão protegida", (name, signature, helper) => {
+    const definition = functionDefinition(name);
+    const escapedSignature = signature.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+    expect(definition).toMatch(/security definer/);
+    expect(definition).toMatch(/set search_path = public, pg_temp/);
+    expect(definition).toMatch(new RegExp(`perform public\\.${helper}\\(p_event_id\\)`));
+    expect(definition).toMatch(/for update of eeu|for update of ee|update public\.events/);
+    expect(definition).toMatch(
+      new RegExp(`revoke execute on function public\\.${name}\\(${escapedSignature}\\) from public;`)
+    );
+    expect(definition).toMatch(
+      new RegExp(`grant execute on function public\\.${name}\\(${escapedSignature}\\) to authenticated;`)
+    );
+  });
+
+  it("carrega sob o lock da OS e revalida o estado na mesma transação", () => {
+    const load = functionDefinition("load_serialized_material");
+
+    expect(load).toMatch(/perform public\.assert_event_load_access\(p_event_id\)/);
+    expect(load).toMatch(/equipment_units[\s\S]*qr_code = btrim\(p_qr_code\)/);
+    expect(load).toMatch(/other_event\.status not in[\s\S]*cancelled[\s\S]*completed/);
+    expect(load).toMatch(/for update of unit_row/);
+    expect(load).toMatch(/insert into public\.event_equipment_units/);
+    expect(load).toMatch(/'loaded_units_count'/);
+  });
+
+  it("retorna e registra defeito serializado atomicamente dentro do tenant da OS", () => {
+    const returned = functionDefinition("return_serialized_material");
+
+    expect(returned).toMatch(/equipment\.organization_id = org_id/);
+    expect(returned).toMatch(/unit_row\.equipment_id = ee\.equipment_id/);
+    expect(returned).toMatch(/qr_code = btrim\(p_qr_code\)/);
+    expect(returned).toMatch(/for update of eeu/);
+    expect(returned).toMatch(/set returned_at = timezone\('utc', now\(\)\)/);
+    expect(returned).toMatch(/update public\.equipment_units[\s\S]*maintenance/);
+    expect(returned).toMatch(/update public\.equipment_units[\s\S]*inactive/);
+    expect(returned).toMatch(/insert into public\.equipment_maintenance/);
+    expect(returned).toMatch(/'returned_units_count'/);
+  });
+
+  it("não aceita QR de unidade inconsistente com o equipamento da linha", () => {
+    expect(functionDefinition("unload_serialized_material")).toMatch(
+      /unit_row\.equipment_id = ee\.equipment_id/
+    );
+    expect(functionDefinition("unreturn_serialized_material_by_qr")).toMatch(
+      /unit_row\.equipment_id = ee\.equipment_id/
+    );
+  });
+
+  it("finalização da carga compartilha o lock e só promove ready_to_load", () => {
+    const finalize = functionDefinition("finalize_event_load");
+
+    expect(finalize).toMatch(/perform public\.assert_event_load_access\(p_event_id\)/);
+    expect(finalize).toMatch(
+      /update public\.events[\s\S]*set status = 'in_field'[\s\S]*where id = p_event_id[\s\S]*and status = 'ready_to_load'/
+    );
   });
 });

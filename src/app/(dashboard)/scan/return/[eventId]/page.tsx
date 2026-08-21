@@ -56,6 +56,7 @@ export default async function ScanReturnPage({ params }: { params: Promise<{ eve
         eventId={eventId}
         eventStatus={event.status}
         initialItems={items}
+        canReturnSerialized={canFinalizeReturn}
         canReturnBulk={canReturnBulk}
         canFinalizeReturn={canFinalizeReturn}
       />

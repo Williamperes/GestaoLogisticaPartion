@@ -33,17 +33,24 @@ interface LoadScanClientProps {
   eventId: string;
   eventStatus: EventStatus;
   initialItems: Item[];
+  canMutateLoad?: boolean;
   role: AppRole | null;
   extraCandidates: ExtraMaterialCandidate[];
   initialExtraLog: ExtraMaterialLog[];
 }
 
 type Mode = "load" | "unload" | "extra";
+type PendingOperation = {
+  id: number;
+  eventId: string;
+  canonicalCounts: Map<string, number>;
+};
 
 export function LoadScanClient({
   eventId,
   eventStatus,
   initialItems,
+  canMutateLoad = true,
   role,
   extraCandidates,
   initialExtraLog,
@@ -51,6 +58,8 @@ export function LoadScanClient({
   const router = useRouter();
   const [items, setItems] = useState(initialItems);
   const previousCanonicalItems = useRef({ eventId, items: initialItems });
+  const operationSequence = useRef(0);
+  const latestAppliedOperation = useRef(new Map<string, number>());
   const [mode, setMode] = useState<Mode>("load");
   const [busy, setBusy] = useState(false);
   const [finalizing, setFinalizing] = useState(false);
@@ -62,6 +71,7 @@ export function LoadScanClient({
     previousCanonicalItems.current = { eventId, items: initialItems };
 
     if (previousCanonical.eventId !== eventId) {
+      latestAppliedOperation.current.clear();
       setItems(initialItems);
       return;
     }
@@ -96,17 +106,46 @@ export function LoadScanClient({
   const totalQty = items.reduce((acc, i) => acc + i.qty, 0);
   const totalLoaded = items.reduce((acc, i) => acc + Math.min(i.loadedUnitsCount, i.qty), 0);
 
-  function applyDelta(eeId: string, delta: number) {
+  function beginOperation(): PendingOperation {
+    const canonical = previousCanonicalItems.current;
+    return {
+      id: ++operationSequence.current,
+      eventId: canonical.eventId,
+      canonicalCounts: new Map(
+        canonical.items.map((item) => [item.id, item.loadedUnitsCount])
+      ),
+    };
+  }
+
+  function applyLoadedCount(
+    operation: PendingOperation,
+    eeId: string,
+    loadedUnitsCount: number
+  ) {
+    if (operation.eventId !== previousCanonicalItems.current.eventId) return;
+    if ((latestAppliedOperation.current.get(eeId) ?? 0) > operation.id) return;
+    latestAppliedOperation.current.set(eeId, operation.id);
+
+    const canonicalNow = previousCanonicalItems.current.items.find((item) => item.id === eeId);
+    if (!canonicalNow || canonicalNow.loadedUnitsCount !== operation.canonicalCounts.get(eeId)) {
+      return;
+    }
+
     setItems((prev) =>
       prev.map((item) =>
         item.id === eeId
-          ? { ...item, loadedUnitsCount: Math.max(0, item.loadedUnitsCount + delta) }
+          ? {
+              ...item,
+              loadedUnitsCount: Math.min(item.qty, Math.max(0, loadedUnitsCount)),
+            }
           : item
       )
     );
   }
 
   async function handleScan(text: string) {
+    if (!canMutateLoad) return;
+    const operation = beginOperation();
     const scanMode = mode === "unload" ? "unload" : "load";
     const result =
       scanMode === "load" ? await scanLoadUnit(eventId, text) : await unscanLoadUnit(eventId, text);
@@ -116,12 +155,15 @@ export function LoadScanClient({
       return;
     }
     scanFeedbackSuccess();
-    if (result.eventEquipmentId) applyDelta(result.eventEquipmentId, scanMode === "load" ? 1 : -1);
+    if (result.eventEquipmentId && result.loadedUnitsCount !== undefined) {
+      applyLoadedCount(operation, result.eventEquipmentId, result.loadedUnitsCount);
+    }
     toast.success(scanMode === "load" ? `Carregado: ${text}` : `Removido: ${text}`);
   }
 
   async function handleManual(item: Item, delta: 1 | -1) {
-    if (busy) return;
+    if (!canMutateLoad || busy) return;
+    const operation = beginOperation();
     setBusy(true);
     try {
       const result =
@@ -134,14 +176,16 @@ export function LoadScanClient({
         return;
       }
       scanFeedbackSuccess();
-      applyDelta(item.id, delta);
+      if (result.loadedUnitsCount !== undefined) {
+        applyLoadedCount(operation, item.id, result.loadedUnitsCount);
+      }
     } finally {
       setBusy(false);
     }
   }
 
   async function handleFinalize() {
-    if (finalizing) return;
+    if (!canMutateLoad || finalizing) return;
     setFinalizing(true);
     try {
       const result = await finalizeLoad(eventId);
@@ -157,6 +201,13 @@ export function LoadScanClient({
   }
 
   function Counter({ item }: { item: Item }) {
+    if (!canMutateLoad) {
+      return (
+        <span className="min-w-[2.75rem] text-center text-xs tabular-nums text-muted-foreground">
+          {item.loadedUnitsCount}/{item.qty}
+        </span>
+      );
+    }
     return (
       <div className="flex shrink-0 items-center gap-1.5">
         <button
@@ -186,7 +237,7 @@ export function LoadScanClient({
 
   return (
     <>
-      <div
+      {canMutateLoad && <div
         className={`mb-3 grid ${
           isWarehouse ? "grid-cols-3" : "grid-cols-2"
         } gap-1 rounded-xl border border-border bg-card p-1`}
@@ -220,7 +271,7 @@ export function LoadScanClient({
             Material a mais
           </button>
         )}
-      </div>
+      </div>}
 
       {showsExtraPanel ? (
         <ExtraMaterialPanel
@@ -230,7 +281,7 @@ export function LoadScanClient({
         />
       ) : (
         <>
-          <div
+          {canMutateLoad && <div
             className={
               mode === "unload"
                 ? "rounded-2xl ring-2 ring-red-500/40 ring-offset-2 ring-offset-background"
@@ -238,7 +289,7 @@ export function LoadScanClient({
             }
           >
             <QrScanner onResult={handleScan} onError={(e) => toast.error(e.message)} />
-          </div>
+          </div>}
 
           <div className="mt-3 flex items-center justify-between rounded-xl border border-border bg-card px-3 py-2 text-xs">
             <span className="font-medium">Progresso</span>
@@ -299,7 +350,7 @@ export function LoadScanClient({
               <p className="text-sm font-medium text-emerald-700">Tudo carregado.</p>
               {eventStatus === "in_field" ? (
                 <p className="text-xs font-medium text-amber-600">OS já está em campo ✓</p>
-              ) : (
+              ) : canMutateLoad ? (
                 <button
                   type="button"
                   onClick={handleFinalize}
@@ -313,7 +364,7 @@ export function LoadScanClient({
                     ? "Fechar OS — colocar Em Campo"
                     : "Libere a carga na OS primeiro"}
                 </button>
-              )}
+              ) : null}
             </div>
           )}
 
