@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import {
   Plus,
   CalendarDays,
@@ -10,6 +11,7 @@ import {
   Building2,
   AlertTriangle,
   FileText,
+  type LucideIcon,
 } from "lucide-react";
 
 import {
@@ -30,6 +32,36 @@ const INPUT_CLASS =
   "w-full rounded-2xl border border-border bg-background px-4 py-3 text-sm outline-none transition focus:border-primary/50 focus:ring-4 focus:ring-primary/10";
 const LABEL_CLASS = "space-y-1.5";
 const LABEL_TEXT_CLASS = "text-sm font-medium text-foreground";
+
+function CollapsibleSection({
+  title,
+  icon: Icon,
+  children,
+  defaultOpen = false,
+}: {
+  title: string;
+  icon: LucideIcon;
+  children: ReactNode;
+  defaultOpen?: boolean;
+}) {
+  return (
+    <details open={defaultOpen} className="group rounded-xl border border-border bg-card/50">
+      <summary className="flex cursor-pointer items-center justify-between gap-2 px-4 py-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        <span className="flex items-center gap-2">
+          <Icon className="h-3.5 w-3.5" />
+          {title}
+        </span>
+        <span className="text-[10px] text-muted-foreground/70 group-open:hidden">
+          expandir
+        </span>
+        <span className="hidden text-[10px] text-muted-foreground/70 group-open:inline">
+          recolher
+        </span>
+      </summary>
+      <div className="flex flex-col gap-4 border-t border-border px-4 py-4">{children}</div>
+    </details>
+  );
+}
 
 interface EventSheetProps {
   clients: ClientOrganization[];
@@ -62,60 +94,56 @@ export function EventSheet({ clients, templates }: EventSheetProps) {
 
         <form action={createEvent} className="flex flex-1 flex-col overflow-y-auto">
           <div className="flex flex-col gap-5 px-6 py-6">
-            {/* Nome do evento */}
-            <label className={LABEL_CLASS}>
-              <span className={LABEL_TEXT_CLASS}>Nome do evento / OS *</span>
-              <input
-                name="name"
-                required
-                placeholder="Ex.: Festival Aurora 2025"
-                className={INPUT_CLASS}
-              />
-            </label>
-
-            {/* Cliente */}
-            <label className={LABEL_CLASS}>
-              <span className={LABEL_TEXT_CLASS}>Cliente</span>
-              <select name="clientOrganizationId" className={INPUT_CLASS}>
-                <option value="">— Sem cliente vinculado —</option>
-                {clients.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                    {c.city ? ` · ${c.city}` : ""}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            {/* Datas */}
-            <div className="grid gap-4 sm:grid-cols-2">
+            <CollapsibleSection title="Dados principais" icon={FileText} defaultOpen>
               <label className={LABEL_CLASS}>
-                <span className="flex items-center gap-1.5 text-sm font-medium text-foreground">
-                  <CalendarDays className="h-3.5 w-3.5" />
-                  Data de início *
-                </span>
-                <input name="startDate" type="date" required className={INPUT_CLASS} />
+                <span className={LABEL_TEXT_CLASS}>Nome do evento / OS *</span>
+                <input
+                  name="name"
+                  required
+                  placeholder="Ex.: Festival Aurora 2025"
+                  className={INPUT_CLASS}
+                />
               </label>
+
               <label className={LABEL_CLASS}>
-                <span className="flex items-center gap-1.5 text-sm font-medium text-foreground">
-                  <CalendarDays className="h-3.5 w-3.5" />
-                  Data de encerramento
-                </span>
-                <input name="endDate" type="date" className={INPUT_CLASS} />
+                <span className={LABEL_TEXT_CLASS}>Cliente</span>
+                <select name="clientOrganizationId" className={INPUT_CLASS}>
+                  <option value="">— Sem cliente vinculado —</option>
+                  {clients.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                      {c.city ? ` · ${c.city}` : ""}
+                    </option>
+                  ))}
+                </select>
               </label>
-            </div>
+            </CollapsibleSection>
 
-            <label className={LABEL_CLASS}>
-              <span className={LABEL_TEXT_CLASS}>Valor da locação (R$)</span>
-              <input name="value" inputMode="decimal" placeholder="0,00" className={INPUT_CLASS} />
-            </label>
+            <CollapsibleSection title="Datas e valor" icon={CalendarDays} defaultOpen>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <label className={LABEL_CLASS}>
+                  <span className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+                    <CalendarDays className="h-3.5 w-3.5" />
+                    Data de início *
+                  </span>
+                  <input name="startDate" type="date" required className={INPUT_CLASS} />
+                </label>
+                <label className={LABEL_CLASS}>
+                  <span className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+                    <CalendarDays className="h-3.5 w-3.5" />
+                    Data de encerramento
+                  </span>
+                  <input name="endDate" type="date" className={INPUT_CLASS} />
+                </label>
+              </div>
 
-            {/* Local */}
-            <div className="grid gap-4 rounded-xl border border-border bg-card/50 p-4">
-              <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                <MapPin className="h-3.5 w-3.5" />
-                Local do evento
-              </p>
+              <label className={LABEL_CLASS}>
+                <span className={LABEL_TEXT_CLASS}>Valor da locação (R$)</span>
+                <input name="value" inputMode="decimal" placeholder="0,00" className={INPUT_CLASS} />
+              </label>
+            </CollapsibleSection>
+
+            <CollapsibleSection title="Local do evento" icon={MapPin}>
               <label className={LABEL_CLASS}>
                 <span className={LABEL_TEXT_CLASS}>Venue / Local</span>
                 <input
@@ -142,23 +170,10 @@ export function EventSheet({ clients, templates }: EventSheetProps) {
                   />
                 </label>
               </div>
-            </div>
+            </CollapsibleSection>
 
-            {/* Detalhes operacionais (opcional, recolhível) */}
-            <details className="group rounded-xl border border-border bg-card/50">
-              <summary className="flex cursor-pointer items-center justify-between gap-2 px-4 py-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                <span className="flex items-center gap-2">
-                  <Truck className="h-3.5 w-3.5" />
-                  Detalhes operacionais (opcional)
-                </span>
-                <span className="text-[10px] text-muted-foreground/70 group-open:hidden">
-                  expandir
-                </span>
-                <span className="hidden text-[10px] text-muted-foreground/70 group-open:inline">
-                  recolher
-                </span>
-              </summary>
-              <div className="flex flex-col gap-4 border-t border-border px-4 py-4">
+            <CollapsibleSection title="Detalhes operacionais (opcional)" icon={Truck}>
+              <CollapsibleSection title="Transporte e iluminação" icon={Truck}>
                 <div className="grid gap-4 sm:grid-cols-2">
                   <label className={LABEL_CLASS}>
                     <span className="flex items-center gap-1.5 text-sm font-medium text-foreground">
@@ -183,7 +198,9 @@ export function EventSheet({ clients, templates }: EventSheetProps) {
                     />
                   </label>
                 </div>
+              </CollapsibleSection>
 
+              <CollapsibleSection title="Cronograma operacional" icon={CalendarDays}>
                 <div className="grid gap-4 sm:grid-cols-2">
                   <label className={LABEL_CLASS}>
                     <span className="flex items-center gap-1.5 text-sm font-medium text-foreground">
@@ -208,7 +225,9 @@ export function EventSheet({ clients, templates }: EventSheetProps) {
                     />
                   </label>
                 </div>
+              </CollapsibleSection>
 
+              <CollapsibleSection title="Agência e riscos" icon={Building2}>
                 <label className={LABEL_CLASS}>
                   <span className="flex items-center gap-1.5 text-sm font-medium text-foreground">
                     <Building2 className="h-3.5 w-3.5" />
@@ -243,7 +262,9 @@ export function EventSheet({ clients, templates }: EventSheetProps) {
                     />
                   </div>
                 </fieldset>
+              </CollapsibleSection>
 
+              <CollapsibleSection title="Observações" icon={FileText}>
                 <label className={LABEL_CLASS}>
                   <span className="flex items-center gap-1.5 text-sm font-medium text-foreground">
                     <FileText className="h-3.5 w-3.5" />
@@ -256,11 +277,11 @@ export function EventSheet({ clients, templates }: EventSheetProps) {
                     className={`${INPUT_CLASS} resize-y`}
                   />
                 </label>
-              </div>
-            </details>
+              </CollapsibleSection>
+            </CollapsibleSection>
 
-            {/* Template de checklist */}
-            <label className={LABEL_CLASS}>
+            <CollapsibleSection title="Checklist" icon={ListChecks}>
+              <label className={LABEL_CLASS}>
               <span className="flex items-center gap-1.5 text-sm font-medium text-foreground">
                 <ListChecks className="h-3.5 w-3.5" />
                 Template de Checklist
@@ -289,7 +310,8 @@ export function EventSheet({ clients, templates }: EventSheetProps) {
                   ))}
                 </select>
               )}
-            </label>
+              </label>
+            </CollapsibleSection>
           </div>
 
           <div className="mt-auto border-t border-border bg-background/60 px-6 py-4">

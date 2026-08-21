@@ -112,4 +112,72 @@ describe("EventSheet", () => {
     await user.type(nameInput, "Show Open Air");
     expect(nameInput.value).toBe("Show Open Air");
   });
+
+  it("permite recolher e expandir todas as seções sem perder os dados", async () => {
+    const user = userEvent.setup();
+    render(<EventSheet clients={CLIENTS} templates={TEMPLATES} />);
+    await user.click(screen.getByRole("button", { name: /Nova OS/i }));
+
+    const sectionTitles = [
+      "Dados principais",
+      "Datas e valor",
+      "Local do evento",
+      "Detalhes operacionais (opcional)",
+      "Checklist",
+    ];
+
+    for (const title of sectionTitles) {
+      expect(screen.getByText(title).closest("details")).toBeInTheDocument();
+    }
+
+    const nameInput = screen.getByPlaceholderText("Ex.: Festival Aurora 2025");
+    await user.type(nameInput, "Evento preservado");
+
+    const primarySectionTitle = screen.getByText("Dados principais");
+    const primarySection = primarySectionTitle.closest("details") as HTMLDetailsElement;
+    expect(primarySection.open).toBe(true);
+
+    await user.click(primarySectionTitle);
+    expect(primarySection.open).toBe(false);
+    expect(nameInput).toHaveValue("Evento preservado");
+
+    await user.click(primarySectionTitle);
+    expect(primarySection.open).toBe(true);
+    expect(nameInput).toHaveValue("Evento preservado");
+  });
+
+  it("divide os detalhes operacionais em subseções recolhíveis", async () => {
+    const user = userEvent.setup();
+    render(<EventSheet clients={CLIENTS} templates={TEMPLATES} />);
+    await user.click(screen.getByRole("button", { name: /Nova OS/i }));
+
+    const operationalTitle = screen.getByText("Detalhes operacionais (opcional)");
+    const operationalSection = operationalTitle.closest("details") as HTMLDetailsElement;
+    await user.click(operationalTitle);
+
+    expect(operationalSection.open).toBe(true);
+
+    for (const title of [
+      "Transporte e iluminação",
+      "Cronograma operacional",
+      "Agência e riscos",
+      "Observações",
+    ]) {
+      const sectionTitle = screen
+        .getAllByText(title)
+        .find((element) => element.closest("summary"));
+      const subsection = sectionTitle?.closest("details") as HTMLDetailsElement;
+      expect(subsection).toBeInTheDocument();
+      expect(subsection.open).toBe(false);
+    }
+
+    const transportTitle = screen.getByText("Transporte e iluminação");
+    const transportSection = transportTitle.closest("details") as HTMLDetailsElement;
+    await user.click(transportTitle);
+    await user.type(screen.getByPlaceholderText("Ex.: Kombi Ilmar"), "Van branca");
+    await user.click(transportTitle);
+
+    expect(transportSection.open).toBe(false);
+    expect(screen.getByPlaceholderText("Ex.: Kombi Ilmar")).toHaveValue("Van branca");
+  });
 });
