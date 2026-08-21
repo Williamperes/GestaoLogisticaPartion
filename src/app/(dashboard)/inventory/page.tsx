@@ -70,10 +70,12 @@ export default async function InventoryPage({ searchParams }: InventoryPageProps
             <a
               href="/inventory/pdf"
               download
-              className="flex h-9 items-center gap-2 rounded-xl border border-border bg-card px-3 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
+              aria-label="Baixar inventário em PDF"
+              title="Baixar inventário em PDF"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-border bg-card text-sm font-medium text-muted-foreground transition-colors hover:text-foreground sm:w-auto sm:gap-2 sm:px-3"
             >
               <Download className="h-4 w-4" />
-              Baixar inventário em PDF
+              <span className="hidden sm:inline">Baixar inventário em PDF</span>
             </a>
             <Link
               href="/inventory/categories"

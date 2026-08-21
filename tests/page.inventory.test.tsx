@@ -111,6 +111,8 @@ describe("InventoryPage (RSC)", () => {
     const downloadLink = screen.getByRole("link", { name: "Baixar inventário em PDF" });
     expect(downloadLink).toHaveAttribute("href", "/inventory/pdf");
     expect(downloadLink).toHaveAttribute("download");
+    expect(downloadLink).toHaveClass("w-9", "sm:w-auto");
+    expect(screen.getByText("Baixar inventário em PDF")).toHaveClass("hidden", "sm:inline");
   });
 
   it("renderiza grid com item serializado", async () => {
