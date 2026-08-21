@@ -674,7 +674,7 @@ describe("finalizeReturn — autorização e conclusão atômica", () => {
   it("rejeita usuário não autenticado antes de qualquer cliente privilegiado", async () => {
     mocks.getCurrentUserContext.mockResolvedValue(null);
 
-    await expect(finalizeReturn("evt-1")).resolves.toEqual({
+    await expect(finalizeReturn(EXTRA_EVENT_ID)).resolves.toEqual({
       ok: false,
       error: "Não autenticado",
     });
@@ -688,7 +688,7 @@ describe("finalizeReturn — autorização e conclusão atômica", () => {
       role: "employee",
     });
 
-    await expect(finalizeReturn("evt-1")).resolves.toEqual({
+    await expect(finalizeReturn(EXTRA_EVENT_ID)).resolves.toEqual({
       ok: false,
       error: "Sem acesso a esta OS.",
     });
@@ -699,7 +699,7 @@ describe("finalizeReturn — autorização e conclusão atômica", () => {
     mocks.getCurrentUserContext.mockResolvedValue(WAREHOUSE_CONTEXT);
     mocks.teamMemberHasEventAccess.mockResolvedValue(false);
 
-    await expect(finalizeReturn("evt-1")).resolves.toEqual({
+    await expect(finalizeReturn(EXTRA_EVENT_ID)).resolves.toEqual({
       ok: false,
       error: "Sem acesso a esta OS.",
     });
@@ -709,22 +709,22 @@ describe("finalizeReturn — autorização e conclusão atômica", () => {
   it("delega a decisão e a conclusão à RPC transacional sem usar admin client", async () => {
     mocks.rpc.mockResolvedValue({ data: true, error: null });
 
-    await expect(finalizeReturn("evt-1")).resolves.toEqual({ ok: true });
+    await expect(finalizeReturn(EXTRA_EVENT_ID)).resolves.toEqual({ ok: true });
     expect(mocks.rpc).toHaveBeenCalledOnce();
     expect(mocks.rpc).toHaveBeenCalledWith("finalize_event_return", {
-      p_event_id: "evt-1",
+      p_event_id: EXTRA_EVENT_ID,
     });
     expect(mocks.createSupabaseAdminClient).not.toHaveBeenCalled();
     expect(mocks.revalidatePath.mock.calls).toEqual([
-      ["/scan/return/evt-1"],
-      ["/events/evt-1"],
+      [`/scan/return/${EXTRA_EVENT_ID}`],
+      [`/events/${EXTRA_EVENT_ID}`],
     ]);
   });
 
   it("não permite conclusão cross-tenant quando a RPC rejeita a organização", async () => {
     mocks.rpc.mockResolvedValue({ data: null, error: { message: "EXTRA_FORBIDDEN" } });
 
-    await expect(finalizeReturn("evt-1")).resolves.toEqual({
+    await expect(finalizeReturn(EXTRA_EVENT_ID)).resolves.toEqual({
       ok: false,
       error: "Sem acesso a esta OS.",
     });
@@ -736,7 +736,7 @@ describe("finalizeReturn — autorização e conclusão atômica", () => {
       error: { message: "EXTRA_RETURN_PENDING" },
     });
 
-    await expect(finalizeReturn("evt-1")).resolves.toEqual({
+    await expect(finalizeReturn(EXTRA_EVENT_ID)).resolves.toEqual({
       ok: false,
       error: "Ainda há equipamentos carregados pendentes de devolução.",
     });

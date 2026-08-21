@@ -932,8 +932,8 @@ declare
   clean_qr text := nullif(btrim(p_qr_code), '');
   org_id uuid;
   ee_id uuid;
-  equipment_id uuid;
-  variant_id uuid;
+  v_equipment_id uuid;
+  v_variant_id uuid;
   target_qty integer;
   target_unit_id uuid;
   unit_status public.equipment_status;
@@ -952,7 +952,7 @@ begin
 
   if clean_qr is not null then
     select unit_row.id, unit_row.equipment_id, unit_row.variant_id, unit_row.status
-      into target_unit_id, equipment_id, variant_id, unit_status
+      into target_unit_id, v_equipment_id, v_variant_id, unit_status
     from public.equipment_units unit_row
     join public.equipment equipment on equipment.id = unit_row.equipment_id
     where unit_row.qr_code = btrim(p_qr_code)
@@ -968,14 +968,14 @@ begin
       into ee_id, target_qty
     from public.event_equipment ee
     where ee.event_id = p_event_id
-      and ee.equipment_id = equipment_id
-      and ee.variant_id is not distinct from variant_id
+      and ee.equipment_id = v_equipment_id
+      and ee.variant_id is not distinct from v_variant_id
     order by ee.created_at, ee.id
     limit 1
     for update of ee;
   else
     select ee.id, ee.equipment_id, ee.variant_id, ee.qty
-      into ee_id, equipment_id, variant_id, target_qty
+      into ee_id, v_equipment_id, v_variant_id, target_qty
     from public.event_equipment ee
     join public.equipment equipment on equipment.id = ee.equipment_id
     where ee.id = p_event_equipment_id
@@ -992,8 +992,8 @@ begin
       into target_unit_id, unit_status
     from public.equipment_units unit_row
     join public.equipment equipment on equipment.id = unit_row.equipment_id
-    where unit_row.equipment_id = equipment_id
-      and unit_row.variant_id is not distinct from variant_id
+    where unit_row.equipment_id = v_equipment_id
+      and unit_row.variant_id is not distinct from v_variant_id
       and equipment.organization_id = org_id
       and equipment.type = 'serialized'::public.equipment_type
       and unit_row.status not in (
@@ -1055,7 +1055,7 @@ begin
 
     return jsonb_build_object(
       'event_equipment_id', ee_id,
-      'equipment_id', equipment_id,
+      'equipment_id', v_equipment_id,
       'equipment_unit_id', target_unit_id,
       'loaded_units_count', loaded_count
     );
@@ -1134,7 +1134,7 @@ begin
 
   return jsonb_build_object(
     'event_equipment_id', ee_id,
-    'equipment_id', equipment_id,
+    'equipment_id', v_equipment_id,
     'equipment_unit_id', target_unit_id,
     'loaded_units_count', loaded_count
   );

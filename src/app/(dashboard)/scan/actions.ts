@@ -103,6 +103,11 @@ function normalizeUuid(value: unknown): string | null {
   return normalized && UUID_PATTERN.test(normalized) ? normalized : null;
 }
 
+function normalizeOptionalText(value: unknown): string | null | undefined {
+  if (typeof value !== "string") return undefined;
+  return value.trim() || null;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -507,41 +512,49 @@ export type DefectCondition = "damaged" | "lost";
 // ── Bipar por código ────────────────────────────────────────────────────────
 
 export async function scanLoadUnit(eventId: string, qrCode: string): Promise<ScanResult> {
-  const trimmed = qrCode.trim();
-  if (!trimmed) return { ok: false, error: "QR vazio" };
-  return mutateSerializedLoad("load_serialized_material", eventId, null, trimmed);
+  const normalizedEventId = normalizeUuid(eventId);
+  if (!normalizedEventId) return { ok: false, error: "Sem acesso a esta OS." };
+  const normalizedQrCode = normalizeRequiredText(qrCode);
+  if (!normalizedQrCode) return { ok: false, error: "QR vazio" };
+  return mutateSerializedLoad("load_serialized_material", normalizedEventId, null, normalizedQrCode);
 }
 
 export async function scanReturnUnit(eventId: string, qrCode: string): Promise<ScanResult> {
-  const trimmed = qrCode.trim();
-  if (!trimmed) return { ok: false, error: "QR vazio" };
-  return mutateSerializedReturn(eventId, null, trimmed, "ok", null);
+  const normalizedEventId = normalizeUuid(eventId);
+  if (!normalizedEventId) return { ok: false, error: "Sem acesso a esta OS." };
+  const normalizedQrCode = normalizeRequiredText(qrCode);
+  if (!normalizedQrCode) return { ok: false, error: "QR vazio" };
+  return mutateSerializedReturn(normalizedEventId, null, normalizedQrCode, "ok", null);
 }
 
 // ── Desbipar por código ─────────────────────────────────────────────────────
 
 export async function unscanLoadUnit(eventId: string, qrCode: string): Promise<ScanResult> {
-  const trimmed = qrCode.trim();
-  if (!trimmed) return { ok: false, error: "QR vazio" };
-  return mutateSerializedLoad("unload_serialized_material", eventId, null, trimmed);
+  const normalizedEventId = normalizeUuid(eventId);
+  if (!normalizedEventId) return { ok: false, error: "Sem acesso a esta OS." };
+  const normalizedQrCode = normalizeRequiredText(qrCode);
+  if (!normalizedQrCode) return { ok: false, error: "QR vazio" };
+  return mutateSerializedLoad("unload_serialized_material", normalizedEventId, null, normalizedQrCode);
 }
 
 export async function unscanReturnUnit(eventId: string, qrCode: string): Promise<ScanResult> {
-  const trimmed = qrCode.trim();
-  if (!trimmed) return { ok: false, error: "QR vazio" };
+  const normalizedEventId = normalizeUuid(eventId);
+  if (!normalizedEventId) return { ok: false, error: "Sem acesso a esta OS." };
+  const normalizedQrCode = normalizeRequiredText(qrCode);
+  if (!normalizedQrCode) return { ok: false, error: "QR vazio" };
 
-  const authorizationError = await authorizeEventReturn(eventId);
+  const authorizationError = await authorizeEventReturn(normalizedEventId);
   if (authorizationError) return authorizationError;
 
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase.rpc("unreturn_serialized_material_by_qr", {
-    p_event_id: eventId,
-    p_qr_code: trimmed,
+    p_event_id: normalizedEventId,
+    p_qr_code: normalizedQrCode,
   });
   if (error) return { ok: false, error: translateReturnError(error.message) };
   const result = serializedScanSuccess(data, "returned_units_count");
   if (!result) return { ok: false, error: "Não foi possível desfazer a devolução." };
-  revalidateReturn(eventId);
+  revalidateReturn(normalizedEventId);
   return result;
 }
 
@@ -551,33 +564,37 @@ export async function unscanReturnUnit(eventId: string, qrCode: string): Promise
 // "Em campo" e o retorno completo a "Conclui".
 
 export async function finalizeLoad(eventId: string): Promise<ScanResult> {
-  const authorizationError = await authorizeEventReturn(eventId);
+  const normalizedEventId = normalizeUuid(eventId);
+  if (!normalizedEventId) return { ok: false, error: "Sem acesso a esta OS." };
+  const authorizationError = await authorizeEventReturn(normalizedEventId);
   if (authorizationError) return authorizationError;
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase.rpc("finalize_event_load", {
-    p_event_id: eventId,
+    p_event_id: normalizedEventId,
   });
   if (error) return { ok: false, error: translateLoadError(error.message) };
   if (data !== true) return { ok: false, error: "Não foi possível finalizar a carga." };
 
-  revalidatePath(`/scan/load/${eventId}`);
-  revalidatePath(`/scan/return/${eventId}`);
-  revalidatePath(`/events/${eventId}`);
+  revalidatePath(`/scan/load/${normalizedEventId}`);
+  revalidatePath(`/scan/return/${normalizedEventId}`);
+  revalidatePath(`/events/${normalizedEventId}`);
   return { ok: true };
 }
 
 export async function finalizeReturn(eventId: string): Promise<ScanResult> {
-  const authorizationError = await authorizeEventReturn(eventId);
+  const normalizedEventId = normalizeUuid(eventId);
+  if (!normalizedEventId) return { ok: false, error: "Sem acesso a esta OS." };
+  const authorizationError = await authorizeEventReturn(normalizedEventId);
   if (authorizationError) return authorizationError;
 
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase.rpc("finalize_event_return", {
-    p_event_id: eventId,
+    p_event_id: normalizedEventId,
   });
   if (error) return { ok: false, error: translateReturnError(error.message) };
   if (data !== true) return { ok: false, error: "Não foi possível concluir a devolução." };
 
-  revalidateReturn(eventId);
+  revalidateReturn(normalizedEventId);
   return { ok: true };
 }
 
@@ -587,21 +604,52 @@ export async function manualLoadUnit(
   eventId: string,
   eventEquipmentId: string
 ): Promise<ScanResult> {
-  return mutateSerializedLoad("load_serialized_material", eventId, eventEquipmentId, null);
+  const normalizedEventId = normalizeUuid(eventId);
+  const normalizedEventEquipmentId = normalizeUuid(eventEquipmentId);
+  if (!normalizedEventId || !normalizedEventEquipmentId) {
+    return { ok: false, error: "Sem acesso a esta OS." };
+  }
+  return mutateSerializedLoad(
+    "load_serialized_material",
+    normalizedEventId,
+    normalizedEventEquipmentId,
+    null
+  );
 }
 
 export async function manualUnloadUnit(
   eventId: string,
   eventEquipmentId: string
 ): Promise<ScanResult> {
-  return mutateSerializedLoad("unload_serialized_material", eventId, eventEquipmentId, null);
+  const normalizedEventId = normalizeUuid(eventId);
+  const normalizedEventEquipmentId = normalizeUuid(eventEquipmentId);
+  if (!normalizedEventId || !normalizedEventEquipmentId) {
+    return { ok: false, error: "Sem acesso a esta OS." };
+  }
+  return mutateSerializedLoad(
+    "unload_serialized_material",
+    normalizedEventId,
+    normalizedEventEquipmentId,
+    null
+  );
 }
 
 export async function manualReturnUnit(
   eventId: string,
   eventEquipmentId: string
 ): Promise<ScanResult> {
-  return mutateSerializedReturn(eventId, eventEquipmentId, null, "ok", null);
+  const normalizedEventId = normalizeUuid(eventId);
+  const normalizedEventEquipmentId = normalizeUuid(eventEquipmentId);
+  if (!normalizedEventId || !normalizedEventEquipmentId) {
+    return { ok: false, error: "Sem acesso a esta OS." };
+  }
+  return mutateSerializedReturn(
+    normalizedEventId,
+    normalizedEventEquipmentId,
+    null,
+    "ok",
+    null
+  );
 }
 
 // ── Retorno com defeito ──────────────────────────────────────────────────────
@@ -615,12 +663,24 @@ export async function scanReturnDefectUnit(
   condition: DefectCondition,
   note: string
 ): Promise<ScanResult> {
-  const trimmed = qrCode.trim();
-  if (!trimmed) return { ok: false, error: "QR vazio" };
+  const normalizedEventId = normalizeUuid(eventId);
+  if (!normalizedEventId) return { ok: false, error: "Sem acesso a esta OS." };
+  const normalizedQrCode = normalizeRequiredText(qrCode);
+  if (!normalizedQrCode) return { ok: false, error: "QR vazio" };
   if (condition !== "damaged" && condition !== "lost") {
     return { ok: false, error: "Condição de devolução inválida." };
   }
-  return mutateSerializedReturn(eventId, null, trimmed, condition, note.trim() || null);
+  const normalizedNote = normalizeOptionalText(note);
+  if (normalizedNote === undefined) {
+    return { ok: false, error: "Dados de devolução inválidos." };
+  }
+  return mutateSerializedReturn(
+    normalizedEventId,
+    null,
+    normalizedQrCode,
+    condition,
+    normalizedNote
+  );
 }
 
 export async function manualReturnDefectUnit(
@@ -629,15 +689,24 @@ export async function manualReturnDefectUnit(
   condition: DefectCondition,
   note: string
 ): Promise<ScanResult> {
+  const normalizedEventId = normalizeUuid(eventId);
+  const normalizedEventEquipmentId = normalizeUuid(eventEquipmentId);
+  if (!normalizedEventId || !normalizedEventEquipmentId) {
+    return { ok: false, error: "Sem acesso a esta OS." };
+  }
   if (condition !== "damaged" && condition !== "lost") {
     return { ok: false, error: "Condição de devolução inválida." };
   }
+  const normalizedNote = normalizeOptionalText(note);
+  if (normalizedNote === undefined) {
+    return { ok: false, error: "Dados de devolução inválidos." };
+  }
   return mutateSerializedReturn(
-    eventId,
-    eventEquipmentId,
+    normalizedEventId,
+    normalizedEventEquipmentId,
     null,
     condition,
-    note.trim() || null
+    normalizedNote
   );
 }
 
@@ -645,5 +714,10 @@ export async function manualUnreturnUnit(
   eventId: string,
   eventEquipmentId: string
 ): Promise<ScanResult> {
-  return unreturnSerializedMaterial(eventId, eventEquipmentId, null);
+  const normalizedEventId = normalizeUuid(eventId);
+  const normalizedEventEquipmentId = normalizeUuid(eventEquipmentId);
+  if (!normalizedEventId || !normalizedEventEquipmentId) {
+    return { ok: false, error: "Sem acesso a esta OS." };
+  }
+  return unreturnSerializedMaterial(normalizedEventId, normalizedEventEquipmentId, null);
 }

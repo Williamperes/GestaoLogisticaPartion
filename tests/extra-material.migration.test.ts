@@ -265,6 +265,25 @@ describe("migration 026 — material extra", () => {
     expect(load).toMatch(/'loaded_units_count'/);
   });
 
+  it("qualifica variáveis de equipamento e variante nos seletores QR e manual", () => {
+    const load = functionDefinition("load_serialized_material");
+
+    expect(load).toMatch(/v_equipment_id uuid/);
+    expect(load).toMatch(/v_variant_id uuid/);
+    expect(load).toMatch(
+      /into target_unit_id, v_equipment_id, v_variant_id, unit_status/
+    );
+    expect(load).toMatch(/ee\.equipment_id = v_equipment_id/);
+    expect(load).toMatch(/ee\.variant_id is not distinct from v_variant_id/);
+    expect(load).toMatch(
+      /into ee_id, v_equipment_id, v_variant_id, target_qty/
+    );
+    expect(load).toMatch(/unit_row\.equipment_id = v_equipment_id/);
+    expect(load).toMatch(/unit_row\.variant_id is not distinct from v_variant_id/);
+    expect(load).not.toMatch(/ee\.equipment_id = equipment_id/);
+    expect(load).not.toMatch(/unit_row\.equipment_id = equipment_id/);
+  });
+
   it("retorna e registra defeito serializado atomicamente dentro do tenant da OS", () => {
     const returned = functionDefinition("return_serialized_material");
 
