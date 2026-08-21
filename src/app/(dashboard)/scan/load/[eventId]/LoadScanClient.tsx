@@ -264,8 +264,10 @@ export function LoadScanClient({
           <button
             type="button"
             onClick={() => setMode("extra")}
-            className={`rounded-lg py-1.5 text-xs font-semibold transition ${
-              mode === "extra" ? "bg-amber-500/15 text-amber-700" : "text-muted-foreground"
+            className={`rounded-lg border py-1.5 text-xs font-semibold shadow-sm transition ${
+              mode === "extra"
+                ? "border-amber-500 bg-amber-500 text-amber-950"
+                : "border-amber-500/60 bg-amber-500/10 text-amber-700 hover:bg-amber-500/20 dark:text-amber-300"
             }`}
           >
             Material a mais

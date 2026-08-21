@@ -204,7 +204,13 @@ describe("LoadScanClient — render default", () => {
       initialExtraLog,
     });
 
-    await user.click(screen.getByRole("button", { name: "Material a mais" }));
+    const extraMaterialButton = screen.getByRole("button", { name: "Material a mais" });
+
+    expect(extraMaterialButton).toHaveClass("border-amber-500/60", "bg-amber-500/10");
+
+    await user.click(extraMaterialButton);
+
+    expect(extraMaterialButton).toHaveClass("bg-amber-500", "text-amber-950");
 
     expect(screen.getByLabelText("Motivo do material extra")).toBeRequired();
     expect(
